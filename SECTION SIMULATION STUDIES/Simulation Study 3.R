@@ -1,5 +1,5 @@
 ######################################################################
-### SIMULATION STUDY 3 			    		   				       ###
+### SIMULATION STUDY 3 VERSION 3.0.0 		   				       ###
 ### - Lambda1: LRT testing the covariance matrix is a UB matrix    ###
 ### - Study 3: FDP estimation						               ###
 ######################################################################
@@ -92,12 +92,12 @@ BEST_UNBIASED_ESTIMATOR <- function(S_mat, p_vec){
 
 ESTIMATE_FDP <- function(est_method, Z_vec, v_vec, Sigma_mat, t_threshold_vec, reg_method = "L1", eps = .05, gama, kappa_0, plot_method = "-log"){
 	
-###################################################################
-### this function is modified based on the original R package   ###
-### "pfa" at https://CRAN.R-project.org/package=pfa, with 		###
-### maintainer Tracy Ke <zke@galton.uchicago.edu> and reference ###
-### Fan, Han and Gu (2012) JASA paper 							###
-###################################################################
+	###################################################################
+	### this function is modified based on the original R package   ###
+	### "pfa" at https://CRAN.R-project.org/package=pfa, with 		###
+	### maintainer Tracy Ke <zke@galton.uchicago.edu> and reference ###
+	### Fan, Han and Gu (2012) JASA paper 							###
+	###################################################################
   
 	### Z_vec: p by 1 test statistics
 	###        for "UB", it follows t-distribution with df of vk
