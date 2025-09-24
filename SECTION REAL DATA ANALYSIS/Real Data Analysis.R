@@ -1,6 +1,6 @@
-######################################################################
-### REAL DATA STUDY 				   							   ###
-######################################################################
+#####################################
+### REAL DATA STUDY VERSION 3.0.0 ###
+#####################################
 
 ############################
 ### Loading the packages ###
@@ -98,43 +98,27 @@ BEST_UNBIASED_ESTIMATOR <- function(S_mat, p_vec){
 	return(list(A_mat = A_mat, B_mat = B_mat))
 }
 
-COMPUTE_GAMMA_MATRIX <- function(A_mat, B_mat, p_vec){
+COMPUTE_GAMMA_MATRIX <- function(p_vec){
 	
 	### INPUT
-	### A_mat: K by K 
-	### B_mat: K by K
 	### p_vec: K by 1, p = sum(p_vec)
 	### OUTPUT
 	### Gamma_mat: p by p
 	
 	K <- length(p_vec)
-	p <- sum(p_vec)
-	D_mat <- A_mat + B_mat %*% diag(p_vec)
-	### K by K
-	### eigen(D_mat)$values  
-	### in decreasing order
-	D_eig_mat <- eigen(D_mat)$vectors ### not orthogonal
-	### K by K
-	Xi_mat <- matrix(0, p, K)
-	### p by K
+	### 1 by 1
+	Gamma_mat_temp_1 <- matrix(0, 1, 1)
+	Gamma_mat_temp_2 <- matrix(0, 1, 1)
 	for(k in 1 : K){
-		xi_vec <- c()
-		for(kp in 1 : K){
-			xi_vec <- c(xi_vec, rep(D_eig_mat[kp, k], p_vec[kp]))
-		}
-		Xi_mat[, k] <- xi_vec / sqrt(sum(xi_vec ^ 2))
+		Gamma_mat_temp_1 <- Matrix::bdiag(Gamma_mat_temp_1, matrix(rep(1 / sqrt(p_vec[k]), p_vec[k]), nrow = 1, ncol = p_vec[k]))
+		Gamma_mat_temp_2 <- Matrix::bdiag(Gamma_mat_temp_2, Compositional::helm(p_vec[k]))
 	}
-
-	Q_mat_temp <- matrix(0, 1, 1)
-	for(k in 1 : K){
-		Q_mat_temp <- Matrix::bdiag(Q_mat_temp, rbind(Compositional::helm(p_vec[k]), rep(0, p_vec[k])))
-	}
-	Q_mat_temp <- as.matrix(Q_mat_temp[-1, -1]) 
+	Gamma_mat_temp_1 <- as.matrix(Gamma_mat_temp_1[- 1, - 1])
+	### K by p
+	Gamma_mat_temp_2 <- as.matrix(Gamma_mat_temp_2[- 1, - 1])	
+	### (p - K) by p
 	### deleting the first one
-	for(k in 1 : K){
-		 Q_mat_temp[sum(p_vec[0 : k]), ] <- Xi_mat[, k]
-	}
-	Gamma_mat <- Q_mat_temp
+	Gamma_mat <- rbind(Gamma_mat_temp_1, Gamma_mat_temp_2)
 	return(Gamma_mat)
 }
 
@@ -147,25 +131,37 @@ COMPUTE_EMPIRICAL_LOG_LAMBDA_1 <- function(n, p_vec, V_mat){
 	### OUTPUT
 	### logLambda1: 1 by 1
 	
-	K <- length(p_vec)
-	p_bar <- matrix(0, 2, K)
-	for(k in 1 : K){
-		p_bar[1, k] <- sum(p_vec[0 : (k - 1)]) + 1
-		p_bar[2, k] <- sum(p_vec[1 : k])
+	COMPUTE_DIAGONAL_BLOCKS <- function(M_mat, p_vec) {
+		  if (nrow(M_mat) != ncol(M_mat)) {
+			stop("M must be a square matrix.")
+		  }
+		  if (sum(p_vec) != nrow(M_mat)) {
+			stop("Sum of sizes must equal the matrix dimension.")
+		  }
+		  
+		  idx <- cumsum(c(0, p_vec))
+		  block_list <- vector("list", length(p_vec))
+		  
+		  for (i in seq_along(p_vec)) {
+			row_idx <- (idx[i] + 1):idx[i + 1]
+			col_idx <- (idx[i] + 1):idx[i + 1]
+			block_list[[i]] <- M_mat[row_idx, col_idx, drop = FALSE]
+		  }
+		  
+		  return(block_list)
 	}
-	diag_V_vec <- diag(V_mat)
-	### p by 1
+	
+	K <- length(p_vec)
+	V_diag_list <- COMPUTE_DIAGONAL_BLOCKS(M_mat = V_mat, p_vec = c(K, p_vec - 1))
+	### (K + 1) by from K to pk - 1
 	
 	Item_1 <- sum((p_vec - 1) * log(p_vec - 1))
 	Item_2 <- log(det(V_mat))
-	Item_3 <- 0
+	Item_3 <- - log(det(V_diag_list[[1]]))
 	Item_4 <- 0
 	
 	for(k in 1 : K){
-		end_p_bar_k <- p_bar[2, k]
-		within_p_bar_k <- p_bar[1, k] : (p_bar[2, k] - 1)
-		Item_3 <- Item_3 - log(diag_V_vec)[end_p_bar_k]
-		Item_4 <- Item_4 - (p_vec[k] - 1) * log(sum(diag_V_vec[within_p_bar_k]))
+		Item_4 <- Item_4 - (p_vec[k] - 1) * log(sum(diag(V_diag_list[[k + 1]])))
 	}
 	TwoNlogLambda1 <- Item_1 + Item_2 + Item_3 + Item_4
 	logLambda1 <- (n / 2) * TwoNlogLambda1
@@ -181,22 +177,36 @@ COMPUTE_EMPIRICAL_LOG_LAMBDA_3 <- function(n_vec, p_vec, V_list){
 	### OUTPUT
 	### logLambda3: 1 by 1
 	
-	K <- length(p_vec)
-	p <- sum(p_vec)
-	p_bar <- matrix(0, 2, K)
-	for(k in seq(K)){
-		p_bar[1, k] <- sum(p_vec[0 : (k - 1)]) + 1
-		p_bar[2, k] <- sum(p_vec[1 : k])
+	COMPUTE_DIAGONAL_BLOCKS <- function(M_mat, p_vec) {
+		  if (nrow(M_mat) != ncol(M_mat)) {
+			stop("M must be a square matrix.")
+		  }
+		  if (sum(p_vec) != nrow(M_mat)) {
+			stop("Sum of sizes must equal the matrix dimension.")
+		  }
+		  
+		  idx <- cumsum(c(0, p_vec))
+		  block_list <- vector("list", length(p_vec))
+		  
+		  for (i in seq_along(p_vec)) {
+			row_idx <- (idx[i] + 1):idx[i + 1]
+			col_idx <- (idx[i] + 1):idx[i + 1]
+			block_list[[i]] <- M_mat[row_idx, col_idx, drop = FALSE]
+		  }
+		  
+		  return(block_list)
 	}
+	
+	K <- length(p_vec)
 	n <- sum(n_vec)
 	M <- length(n_vec)
 	f_vec <- n_vec / n
-	
 	V_sum_mat <- Reduce("+", V_list)
 	### p by p
-	diag_V_sum_vec <- diag(V_sum_mat)
-	### p by 1
-
+	
+	V_sum_diag_list <- COMPUTE_DIAGONAL_BLOCKS(M_mat = V_sum_mat, p_vec = c(K, p_vec - 1))
+	### (K + 1) by from K to pk - 1
+	
 	Item_0 <- - p * sum(f_vec * log(f_vec))
 	Item_1 <- 0
 	Item_2 <- 0
@@ -204,15 +214,17 @@ COMPUTE_EMPIRICAL_LOG_LAMBDA_3 <- function(n_vec, p_vec, V_list){
 	Item_4 <- 0
 	
 	for(m in 1 : M){
+		Vm_diag_list <- COMPUTE_DIAGONAL_BLOCKS(M_mat = V_list[[m]], p_vec = c(K, p_vec - 1))
+		### (K + 1) by from K to pk - 1
+		
+		Item_1 <- Item_1 + f_vec[m] * log(det(Vm_diag_list[[1]]))
+		
+		Item_2 <- Item_2 - f_vec[m] * log(det(V_sum_diag_list[[1]]))
+		
 		for(k in 1 : K){
-			end_p_bar_k <- p_bar[2, k]
-			within_p_bar_k <- p_bar[1, k] : (p_bar[2, k] - 1)
-			diag_Vm_vec <- diag(V_list[[m]])
-			### p by 1
-			Item_1 <- Item_1 + f_vec[m] * log(diag_Vm_vec[end_p_bar_k])
-			Item_2 <- Item_2 + f_vec[m] * (p_vec[k] - 1) * log(sum(diag_Vm_vec[within_p_bar_k]))
-			Item_3 <- Item_3 - f_vec[m] * log(diag_V_sum_vec[end_p_bar_k])
-			Item_4 <- Item_4 - f_vec[m] * (p_vec[k] - 1) * log(sum(diag_V_sum_vec[within_p_bar_k]))
+			
+			Item_3 <- Item_3 + f_vec[m] * (p_vec[k] - 1) * log(sum(diag(Vm_diag_list[[k + 1]])))
+			Item_4 <- Item_4 - f_vec[m] * (p_vec[k] - 1) * log(sum(diag(V_sum_diag_list[[k + 1]])))
 		}
 	}
 	
@@ -231,29 +243,40 @@ COMPUTE_EMPIRICAL_LOG_LAMBDA_2 <- function(n, p_vec, V_mat, H_mat){
 	### OUTPUT
 	### logLambda2: 1 by 1
 	
-	K <- length(p_vec)
-	p_bar <- matrix(0, 2, K)
-	for(k in 1 : K){
-		p_bar[1, k] <- sum(p_vec[0 : (k - 1)]) + 1
-		p_bar[2, k] <- sum(p_vec[1 : k])
+	COMPUTE_DIAGONAL_BLOCKS <- function(M_mat, p_vec) {
+		  if (nrow(M_mat) != ncol(M_mat)) {
+			stop("M must be a square matrix.")
+		  }
+		  if (sum(p_vec) != nrow(M_mat)) {
+			stop("Sum of sizes must equal the matrix dimension.")
+		  }
+		  
+		  idx <- cumsum(c(0, p_vec))
+		  block_list <- vector("list", length(p_vec))
+		  
+		  for (i in seq_along(p_vec)) {
+			row_idx <- (idx[i] + 1):idx[i + 1]
+			col_idx <- (idx[i] + 1):idx[i + 1]
+			block_list[[i]] <- M_mat[row_idx, col_idx, drop = FALSE]
+		  }
+		  
+		  return(block_list)
 	}
-	diag_V_vec <- diag(V_mat)
-	### p by 1
-	diag_D_vec <- diag(H_mat + V_mat)
-	### p by 1
 	
-	Item_1 <- 0
-	Item_2 <- 0
+	K <- length(p_vec)
+	V_diag_list <- COMPUTE_DIAGONAL_BLOCKS(M_mat = V_mat, p_vec = c(K, p_vec - 1))
+	### (K + 1) by from K to pk - 1
+	H_diag_list <- COMPUTE_DIAGONAL_BLOCKS(M_mat = H_mat, p_vec = c(K, p_vec - 1))
+	### (K + 1) by from K to pk - 1
+	
+	Item_1 <- log(det(V_diag_list[[1]]))
+	Item_2 <- - log(det(V_diag_list[[1]] + H_diag_list[[1]]))
 	Item_3 <- 0
 	Item_4 <- 0
 	
 	for(k in 1 : K){
-		end_p_bar_k <- p_bar[2, k]
-		within_p_bar_k <- p_bar[1, k] : (p_bar[2, k] - 1)
-		Item_1 <- Item_1 + log(diag_V_vec[end_p_bar_k])
-		Item_2 <- Item_2 + (p_vec[k] - 1) * log(sum(diag_V_vec[within_p_bar_k]))
-		Item_3 <- Item_3 - log(diag_D_vec[end_p_bar_k])
-		Item_4 <- Item_4 - (p_vec[k] - 1) * log(sum(diag_D_vec[within_p_bar_k]))
+		Item_3 <- Item_3 + (p_vec[k] - 1) * log(sum(diag(V_diag_list[[k + 1]])))
+		Item_4 <- Item_4 - (p_vec[k] - 1) * log(sum(diag(V_diag_list[[k + 1]] + H_diag_list[[k + 1]])))
 	}
 	TwoNlogLambda2 <- Item_1 + Item_2 + Item_3 + Item_4
 	logLambda2 <- (n / 2) * TwoNlogLambda2
@@ -269,33 +292,43 @@ COMPUTE_EMPIRICAL_LOG_LAMBDA_4 <- function(n_vec, p_vec, V_list, H_mat){
 	### OUTPUT
 	### logLambda4: 1 by 1
 	
-	K <- length(p_vec)
-	p_bar <- matrix(0, 2, K)
-	for(k in 1 : K){
-		p_bar[1, k] <- sum(p_vec[0 : (k - 1)]) + 1
-		p_bar[2, k] <- sum(p_vec[1 : k])
+	COMPUTE_DIAGONAL_BLOCKS <- function(M_mat, p_vec) {
+		  if (nrow(M_mat) != ncol(M_mat)) {
+			stop("M must be a square matrix.")
+		  }
+		  if (sum(p_vec) != nrow(M_mat)) {
+			stop("Sum of sizes must equal the matrix dimension.")
+		  }
+		  
+		  idx <- cumsum(c(0, p_vec))
+		  block_list <- vector("list", length(p_vec))
+		  
+		  for (i in seq_along(p_vec)) {
+			row_idx <- (idx[i] + 1):idx[i + 1]
+			col_idx <- (idx[i] + 1):idx[i + 1]
+			block_list[[i]] <- M_mat[row_idx, col_idx, drop = FALSE]
+		  }
+		  
+		  return(block_list)
 	}
-	n <- sum(n_vec)
 	
+	K <- length(p_vec)
+	n <- sum(n_vec)
 	V_sum_mat <- Reduce("+", V_list)
 	### p by p
-	diag_V_vec <- diag(V_sum_mat)
-	### p by 1
-	diag_D_vec <- diag(H_mat + V_sum_mat)
-	### p by 1
+	V_sum_diag_list <- COMPUTE_DIAGONAL_BLOCKS(M_mat = V_sum_mat, p_vec = c(K, p_vec - 1))
+	### (K + 1) by from K to pk - 1
+	H_diag_list <- COMPUTE_DIAGONAL_BLOCKS(M_mat = H_mat, p_vec = c(K, p_vec - 1))
+	### (K + 1) by from K to pk - 1
 	
-	Item_1 <- 0
-	Item_2 <- 0
+	Item_1 <- log(det(V_sum_diag_list[[1]]))
+	Item_2 <- - log(det(H_diag_list[[1]] + V_sum_diag_list[[1]]))
 	Item_3 <- 0
 	Item_4 <- 0
 	
 	for(k in seq(K)){
-		end_p_bar_k <- p_bar[2, k]
-		within_p_bar_k <- p_bar[1, k] : (p_bar[2, k] - 1)
-		Item_1 <- Item_1 + log(diag_V_vec)[end_p_bar_k]
-		Item_2 <- Item_2 + (p_vec[k] - 1) * log(sum(diag_V_vec[within_p_bar_k]))
-		Item_3 <- Item_3 - log(diag_D_vec[end_p_bar_k])
-		Item_4 <- Item_4 - (p_vec[k] - 1) * log(sum(diag_D_vec[within_p_bar_k]))
+		Item_3 <- Item_3 + (p_vec[k] - 1) * log(sum(diag(V_sum_diag_list[[k + 1]])))
+		Item_4 <- Item_4 - (p_vec[k] - 1) * log(sum(diag(H_diag_list[[k + 1]] + V_sum_diag_list[[k + 1]])))
 	}
 	TwoNlogLambda4 <- Item_1 + Item_2 + Item_3 + Item_4
 	logLambda4 <- (n / 2) * TwoNlogLambda4
@@ -303,9 +336,7 @@ COMPUTE_EMPIRICAL_LOG_LAMBDA_4 <- function(n_vec, p_vec, V_list, H_mat){
 }
 
 COMPUTE_EMPIRICAL_TEST_STATISTICS_SAMPLE <- function(n_vec, p_vec, X_bar_mat, mu_vec_test, S_list, COMPUTE_EMPIRICAL_LOG_LAMBDA_1, COMPUTE_EMPIRICAL_LOG_LAMBDA_2, COMPUTE_EMPIRICAL_LOG_LAMBDA_3, COMPUTE_EMPIRICAL_LOG_LAMBDA_4, BEST_UNBIASED_ESTIMATOR, BLOCK_HADAMARD_PRODUCT, COMPUTE_GAMMA_MATRIX){
-	
-	##### SAMPLE VERSION does not include truth competitors
-	##### for both covariance and mean tests
+
 	### INPUT
 	### n_vec: M by 1
 	### p_vec: K by 1
@@ -313,10 +344,10 @@ COMPUTE_EMPIRICAL_TEST_STATISTICS_SAMPLE <- function(n_vec, p_vec, X_bar_mat, mu
 	### mu_vec_test: p by 1
 	### S_list: M by p by p
 	### OUTPUT
-	### logLambda1_est: 1 by 1
-	### logLambda2_est: 1 by 1
-	### logLambda3_est: 1 by 1
-	### logLambda4_est: 1 by 1
+	### logLambda1_truth: 1 by 1
+	### logLambda2_truth: 1 by 1
+	### logLambda3_truth: 1 by 1
+	### logLambda4_truth: 1 by 1
 	### G_2_est: 1 by 1
 	### G_4_est: 1 by 1
 	
@@ -346,10 +377,7 @@ COMPUTE_EMPIRICAL_TEST_STATISTICS_SAMPLE <- function(n_vec, p_vec, X_bar_mat, mu
 	### K by K
 	Sig_B_mat_est <- res_sig_est$B_mat
 	### K by K
-	Gamma_mat_est <- COMPUTE_GAMMA_MATRIX(
-		A_mat = Sig_A_mat_est, 
-		B_mat = Sig_B_mat_est, 
-		p_vec = p_vec)
+	Gamma_mat <- COMPUTE_GAMMA_MATRIX(p_vec = p_vec)
 	### p by p
 	
 	The_A_mat_est <- solve(Sig_A_mat_est)
@@ -368,16 +396,16 @@ COMPUTE_EMPIRICAL_TEST_STATISTICS_SAMPLE <- function(n_vec, p_vec, X_bar_mat, mu
 	Y_bar_vec_est <- rep(0, p)
 	### p by 1
 	for(m in 1 : M){
-		V_list_est[[m]] <- Gamma_mat_est %*% (S_list[[m]] * (n_vec[m] - 1)) %*% t(Gamma_mat_est)
+		V_list_est[[m]] <- Gamma_mat %*% (S_list[[m]] * (n_vec[m] - 1)) %*% t(Gamma_mat)
 		### p by p
-		Y_mat_est[m, ] <- sqrt(n_vec[m]) * Gamma_mat_est %*% X_bar_mat[m, ]
+		Y_mat_est[m, ] <- sqrt(n_vec[m]) * Gamma_mat %*% X_bar_mat[m, ]
 		### p by 1
 		Y_bar_vec_est <- Y_bar_vec_est + sqrt(n_vec[m]) * Y_mat_est[m, ] / n
 		### p by 1
 	}
 	
 	if(M == 1){
-		nu_vec_test_est <- sqrt(n) * drop(Gamma_mat_est %*% mu_vec_test)
+		nu_vec_test_est <- sqrt(n) * drop(Gamma_mat %*% mu_vec_test)
 		### p by 1
 		H_mat_est <- (Y_mat_est[1, ] - nu_vec_test_est) %*% t(Y_mat_est[1, ] - nu_vec_test_est)
 		### p by 1
@@ -390,7 +418,7 @@ COMPUTE_EMPIRICAL_TEST_STATISTICS_SAMPLE <- function(n_vec, p_vec, X_bar_mat, mu
 	}
 
 	if(M == 1){
-
+		
 		log_Lambda_1_est <- COMPUTE_EMPIRICAL_LOG_LAMBDA_1(
 			n = n, 
 		p_vec = p_vec, 
@@ -405,8 +433,9 @@ COMPUTE_EMPIRICAL_TEST_STATISTICS_SAMPLE <- function(n_vec, p_vec, X_bar_mat, mu
 		G_2_est <- n * drop(t(X_bar_mat[1, ] - mu_vec_test) %*% Theta_mat_est %*% (X_bar_mat[1, ] - mu_vec_test))
 	
 		log_Lambda_3_est <- log_Lambda_4_est <- G_4_est <- NULL
-	
+		
 	} else if (M > 1){
+		
 		log_Lambda_1_est <- log_Lambda_2_est <- G_2_est <- NULL
 	
 		log_Lambda_3_est <- COMPUTE_EMPIRICAL_LOG_LAMBDA_3(
@@ -455,6 +484,113 @@ COMPUTE_THEORETICAL_DISTRIBUTIONS <- function(n_vec, p_vec, reps_max, nu_mat_0, 
 	### logLambda3_vec: reps_max by 1
 	### logLambda4_vec: reps_max by 1
 	
+	COMPUTE_DIAGONAL_BLOCKS <- function(M_mat, p_vec) {
+		  if (nrow(M_mat) != ncol(M_mat)) {
+			stop("M must be a square matrix.")
+		  }
+		  if (sum(p_vec) != nrow(M_mat)) {
+			stop("Sum of sizes must equal the matrix dimension.")
+		  }
+		  
+		  idx <- cumsum(c(0, p_vec))
+		  block_list <- vector("list", length(p_vec))
+		  
+		  for (i in seq_along(p_vec)) {
+			row_idx <- (idx[i] + 1):idx[i + 1]
+			col_idx <- (idx[i] + 1):idx[i + 1]
+			block_list[[i]] <- M_mat[row_idx, col_idx, drop = FALSE]
+		  }
+		  
+		  return(block_list)
+	}
+	
+	GENERATE_WISHART_VARIATES <- function(n, df_para, Sigma_mat, OmegaI_mat, type = 1) {
+		
+		### generate Wishart random variates such that their 
+		### noncentral parameter is type 1: mu %*% t(mu)
+		### mean = df_para * Sigma_mat + mu %*% t(mu)
+		### note: OmegaI_mat must be rank 1
+		
+		### check symmetry ###
+		if (!isSymmetric(OmegaI_mat)) stop("OmegaI_mat must be symmetric")
+  
+		### eigen decomposition ###
+		eig <- eigen(OmegaI_mat, symmetric = TRUE)
+  
+		### check rank 1 ###
+		pos_eig <- which(abs(eig$values) > 1e-8)
+		if (length(pos_eig) != 1) stop("OmegaI_mat must be rank 1 and positive semidefinite")
+  
+		### Compose mu_vec ###
+		lambda <- eig$values[pos_eig]
+		v_vec <- eig$vectors[, pos_eig]
+		if (lambda < 0) stop("OmegaI_mat must be positive semidefinite")
+  
+		mu_vec <- sqrt(lambda) * v_vec
+		### p by 1
+		p <- nrow(Sigma_mat)
+		res_array <- array(0, dim = c(p, p, n))
+		### p by p by n
+			
+		### Generate Wishart matrices ###
+		for (i in 1 : n) {
+			X <- matrix(0, nrow = p, ncol = df_para)
+			for (j in 1 : df_para) {
+				X[, j] <- mvtnorm::rmvnorm(1, mean = mu_vec / sqrt(df_para), sigma = Sigma_mat)
+			}
+			res_array[,,i] <- X %*% t(X)
+		}
+		return(res_array)
+	}
+
+	GENERATE_LOG_DET_MATRIX_DIRICHLET_VARIATES <- function(K, n_vec, Sigma_mat, reps_max){
+	
+		### K: the dimension of variates
+		### n_vec: a M by 1 vector
+		### Sigma_mat: a K by K covariance matrix
+		
+		M <- length(n_vec)
+		### 1 by 1
+		log_det_mat <- matrix(0, reps_max, M)
+		### reps_max by M
+		V00_sum_array <- array(0, dim = c(K, K, reps_max))
+		### K by K by reps_max
+		
+		for(m in 1 : M){
+			V00_mat_temp <- matrixsampling::rwishart(n = reps_max, nu = n_vec[m] - 1, Sigma = Sigma_mat)
+			### K by K by reps_max
+			log_det_mat[, m] <- log(apply(V00_mat_temp, 3, det))
+			### reps_max by 1
+			V00_sum_array <- V00_sum_array + V00_mat_temp
+			### K by K by reps_max
+		}
+		
+		n_mat <- matrix(rep(n_vec / 2, reps_max), reps_max, M, byrow = TRUE)
+		### reps_max by M, first column is n ^ (1)/2, ..., n ^ (1)/2
+				
+		return(rowSums(n_mat * log_det_mat) - sum(n_vec) / 2 * log(apply(V00_sum_array, 3, det)))
+		### reps_max by 1
+	}
+	
+	GENERATE_LOG_WILKS_LAMBDA_VARIATES <- function(df1, df2, Sigma_mat, OmegaI_mat, reps_max, GENERATE_WISHART_VARIATES){
+		
+		### df1: the degree of freedoms for the single component
+		### df2: the degree of freedoms for the second component
+		
+		V00_mat_array <- matrixsampling::rwishart(n = reps_max, nu = df1, Sigma = Sigma_mat)
+		### p by p by reps_max
+		
+		if(norm(OmegaI_mat, "2") < 1e-10){
+			H00_mat_array <- matrixsampling::rwishart(n = reps_max, nu = df2, Sigma = Sigma_mat)
+		} else{
+			H00_mat_array <- GENERATE_WISHART_VARIATES(n = reps_max, df_para = df2, Sigma_mat = Sigma_mat, OmegaI_mat = OmegaI_mat, type = 1)
+			### Theta refers to OmegaI_mat, the first type of noncentrality parameters
+			### p by p by reps_max
+		}
+		
+		return(log(apply(V00_mat_array, 3, det)) - log(apply(V00_mat_array + H00_mat_array, 3, det)))
+	}
+	
 	n <- sum(n_vec)
 	M <- length(n_vec)
 	p <- sum(p_vec)
@@ -463,9 +599,13 @@ COMPUTE_THEORETICAL_DISTRIBUTIONS <- function(n_vec, p_vec, reps_max, nu_mat_0, 
 	### M by 1
 	
 	P_mat <- diag(p_vec)
-	### K by K	
+	### K by K
+	Psq_mat <- diag(p_vec ^ (1 / 2))
+	### K by K
 	Sig_D_mat_0 <- Sig_A_mat_0 + Sig_B_mat_0 %*% P_mat
-	### K by K	
+	### K by K
+	Sig_Dtld_mat_0 <- Sig_A_mat_0 + Psq_mat %*% Sig_B_mat_0 %*% Psq_mat
+	### K by K		
 	
 	C_p_mat <- matrix(0, 1, 1)
 	for(k in 1 : K){
@@ -482,88 +622,84 @@ COMPUTE_THEORETICAL_DISTRIBUTIONS <- function(n_vec, p_vec, reps_max, nu_mat_0, 
 	
 	if(M == 1){
 		
-		logLambda3_vec <- logLambda4B_vec <- logLambda4F_vec <- G4_vec <- NULL
+		logLambda3_vec <- logLambda3_chisq_vec <- logLambda4B_vec <- logLambda4F_vec <- logLambda4_chisq_vec <- G4_vec <- G4_chisq_vec <- G4F_vec <- NULL
 		
 		################################
 		### calculate logLambda1_vec ###
 		################################
 		
-		logLambda10_mat <- matrix(0, reps_max, p - 1)
-		### reps_max by (p - 1)
-		for(j in 1 : (p - 1)){
-			logLambda10_mat[, j] <- log(rbeta(reps_max, (n - 1) / 2 - (p - j) / 2, (p - j) / 2))
-		}
-		logLambda10_vec <- (n / 2) * rowSums(logLambda10_mat)
-		### reps_max by 1
-		
-		Y_k <- c()
-		for(k in 1 : K){
-			Y_k_j <- c()
-			for(j in 2 : (p_vec[k] - 1)){
-				Y_k_j_temp <- log(rbeta(reps_max, (n - 1) / 2, (j - 1) / (p_vec[k] - 1)))
-				Y_k_j <- cbind(Y_k_j, Y_k_j_temp)
+		V_array <- matrixsampling::rwishart(n = reps_max, nu = n - 1, Sigma = Xi_mat_0)
+		### p by p by reps_max
+
+		logLambda1_vec <- apply(V_array, 3, function(V_mat, p_vec, COMPUTE_DIAGONAL_BLOCKS){
+			K <- length(p_vec)
+			V_diag_list <- COMPUTE_DIAGONAL_BLOCKS(V_mat, c(K, p_vec - 1))
+			### (K + 1) by from K to pk - 1 
+			res <- log(det(V_mat)) - log(det(V_diag_list[[1]]))
+			for(k in 1 : K){
+				res <- res - (p_vec[k] - 1) * log(sum(diag(V_diag_list[[k + 1]] / (p_vec[k] - 1))))
 			}
-			### reps_max by (p_vec[k] - 1)
-			Y_k <- cbind(Y_k, Y_k_j)
-			### reps_max by (p - 1)
-		}
-		logLambda1k_vec <- (n / 2) * rowSums(Y_k)
+			return(res)
+		}, p_vec = p_vec, COMPUTE_DIAGONAL_BLOCKS = COMPUTE_DIAGONAL_BLOCKS)
+		### reps_max by 1
+		logLambda1_vec <- (n / 2) * logLambda1_vec
 		### reps_max by 1
 		
-		logLambda1_vec <- logLambda10_vec + logLambda1k_vec
+		f_box <- p * (p + 1) / 2 - K * (K + 3) / 2
+		rho_box <- 1 - (2 * (p ^ 3 - K ^ 3) + 9 * (p ^ 2 - K ^ 2) + 5 * p - 17 * K - 4 * sum((p_vec - 1) ^ (- 1))) / (12 * n * f_box)
+		omega_box <- (- 6 * (p ^ 2 - K ^ 2 + p - K - 2 * K) * ((1 - rho_box) * n - 1) ^ 2 + 12 * (2 * (1 - rho_box) * n * f_box - (p ^ 2 - K ^ 2) - (p - K) + 2 * K) * ((1 - rho_box) * n - 1) - (p ^ 4 - K ^ 4) - 2 * (p ^ 3 - K ^ 3) + p ^ 2 - K ^ 2 + 2 * (p - K)) / (- 48 * n ^ 2 * rho_box ^ 2)
+ 		logLambda1_box_vec <- - ((1 - omega_box) * rchisq(reps_max, f_box) / rho_box + omega_box * rchisq(reps_max, f_box + 4) / rho_box) / 2
 		### reps_max by 1
 		
-		### mu_app <- (2 * K) / (n - 1) - p - (n - p - 3 / 2) * log(1 - p / (n - 1))
-		### sigma2_app <- - 2 * (log(1 - p / (n - 1)) + p / (n - 1))
-		### log_Lambda1_app_vec <- rnorm(reps_max, mean = mu_app, sd = sqrt(sigma2_app))
+		mu_norm <- - (p - K) - log(1 - p / (n - 1)) * (n - p - 3 / 2) + log(1 - K / (n - 1)) * (n - K - 3 / 2) + K / (n - 1)
+		### 1 by 1
+		sigma2_norm <- - 2 * (log(1 - p / (n - 1)) - log(1 - K / (n - 1)) + (p - K) / (n - 1))
+		### 1 by 1
+		logLambda1_norm_vec <- (n / 2) * rnorm(reps_max, mean = mu_norm, sd = sqrt(sigma2_norm))
+		### reps_max by 1
+		
+		logLambda1_chisq_vec <- - rchisq(reps_max, f_box) / 2
 		### reps_max by 1
 		
 		################################
 		### calculate logLambda2_vec ###
 		################################
-		
-		Omega_mat <- (nu_mat_0[1, ] - nu_vec_test) %*% t(nu_mat_0[1, ] - nu_vec_test)
+				
+		OmegaI_mat <- (nu_mat_0[1, ] - nu_vec_test) %*% t(nu_mat_0[1, ] - nu_vec_test)
 		### p by p
-		diag_Omega_vec <- diag(diag(diag(Xi_mat_0) ^ (- 1 / 2)) %*% Omega_mat %*% diag(diag(Xi_mat_0) ^ (- 1 / 2)))
-		### p by 1
+		OmegaI_diag_list <- COMPUTE_DIAGONAL_BLOCKS(OmegaI_mat, c(K, p_vec - 1))
+		### (K + 1) by from K to pk - 1
+		OmegaII_mat <- 1 * solve(Xi_mat_0) %*% OmegaI_mat
+		### p by p due to df = 1
+		OmegaII_diag_list <- COMPUTE_DIAGONAL_BLOCKS(OmegaII_mat, c(K, p_vec - 1))
+		### (K + 1) by from K to pk - 1
 		
-		logLambda20_mat <- matrix(0, reps_max, K) 
-	    ### reps_max by K
-		for(k in 1 : K){
-			end_p_bar_k <- p_bar[2, k]
-			### logLambda20_mat[, k] <- log(1 - rbeta(reps_max, (n - 1) / 2, 1 / 2, diag_Omega_vec[end_p_bar_k]))
-			logLambda20_mat[, k] <- log(1 - rbeta(reps_max, 1 / 2, (n - 1) / 2, diag_Omega_vec[end_p_bar_k]))
-		}
-		logLambda20_vec <- (n / 2) * rowSums(logLambda20_mat)
+		logLambda2_WilksLambda_vec <- (n / 2) * GENERATE_LOG_WILKS_LAMBDA_VARIATES(df1 = n - 1, df2 = 1, Sigma_mat = Sig_Dtld_mat_0, OmegaI_mat = OmegaI_diag_list[[1]], reps_max = reps_max, GENERATE_WISHART_VARIATES = GENERATE_WISHART_VARIATES)
 		### reps_max by 1
 		
 		Y_k_mat <- matrix(0, reps_max, K)
 		### reps_max by K
 		for(k in 1 : K){
-			within_p_bar_k <- p_bar[1, k] : (p_bar[2, k] - 1)
-			### Y_k_mat[, k] <- (p_vec[k] - 1) * log(1 - rbeta(reps_max, (n - 1) * (p_vec[k] - 1) / 2, (p_vec[k] - 1) / 2, sum(diag_Omega_vec[within_p_bar_k])))
-			Y_k_mat[, k] <- (p_vec[k] - 1) * log(1 - rbeta(reps_max, (p_vec[k] - 1) / 2, (n - 1) * (p_vec[k] - 1) / 2, sum(diag_Omega_vec[within_p_bar_k])))
+		 	Y_k_mat[, k] <- (p_vec[k] - 1) * log(1 - rbeta(reps_max, (p_vec[k] - 1) / 2, (n - 1) * (p_vec[k] - 1) / 2, max(0, sum(diag(OmegaII_diag_list[[k + 1]])))))
 		}
-		logLambda2k_vec <- (n / 2) * rowSums(Y_k_mat)
-		### reps_max by 1
-		
-		logLambda2B_vec <- logLambda20_vec + logLambda2k_vec
+		logLambda2B_vec <- logLambda2_WilksLambda_vec + (n / 2) * rowSums(Y_k_mat)
 		### reps_max by 1
 		
 		logF_mat <- matrix(0, reps_max, K)
 		### reps_max by K
 		for(k in 1 : K){
-			end_p_bar_k <- p_bar[2, k]
-			within_p_bar_k <- p_bar[1, k] : (p_bar[2, k] - 1)
-			logF_mat[, k] <- log1p(rf(reps_max, 1, n - 1, diag_Omega_vec[end_p_bar_k]) / (n - 1)) + (p_vec[k] - 1) * log1p(rf(reps_max, p_vec[k] - 1, (p_vec[k] - 1) * (n - 1), sum(diag_Omega_vec[within_p_bar_k])) / (n - 1))
+			logF_mat[, k] <- (p_vec[k] - 1) * log1p(rf(reps_max, p_vec[k] - 1, (p_vec[k] - 1) * (n - 1), max(0, sum(diag(OmegaII_diag_list[[k + 1]])))) / (n - 1))
 		}
-		logLambda2F_vec <- - (n / 2) * rowSums(logF_mat)
+		logLambda2F_vec <- logLambda2_WilksLambda_vec - (n / 2) * rowSums(logF_mat)
+		### reps_max by 1
+		
+		logLambda2_chisq_vec <- - rchisq(reps_max, df = p) / 2
 		### reps_max by 1
 		
 		########################
 		### calculate G2_vec ###
 		########################
-		
+			
 		G2_vec <- rep(0, reps_max)
 						
 		for(k in 1 : K){
@@ -576,23 +712,18 @@ COMPUTE_THEORETICAL_DISTRIBUTIONS <- function(n_vec, p_vec, reps_max, nu_mat_0, 
 		
 		G2_vec <- G2_vec + K * (n - 1) / (n - K) * rf(reps_max, df1 = K, df2 = n - K, ncp = delta_kp1)
 		
+		G2_chisq_vec <- rchisq(reps_max, df = p)
+		### reps_max by 1
+		
 	} else if(M > 1){
-	
-		logLambda1_vec <- log_Lambda1_app_vec <- logLambda2B_vec <- logLambda2F_vec <- G2_vec <- NULL
+		
+		logLambda1_vec <- logLambda1_box_vec <- logLambda1_norm_vec <- logLambda1_chisq_vec <- logLambda2B_vec <- logLambda2F_vec <- logLambda2_chisq_vec <- G2_vec <- G2_chisq_vec <- NULL
 		
 		################################
 		### calculate logLambda3_vec ###
 		################################
 		
-		logLambda30_mat <- matrix(0, reps_max, K)
-		### reps_max by K
-		for(k in 1 : K){	
-			logLambda30_mat_temp <- matrix(rep(n_vec / 2, reps_max), reps_max, M, byrow = TRUE) * (log(MCMCpack::rdirichlet(reps_max, (n_vec - 1) / 2))) 
-			### reps_max by M
-			logLambda30_mat[, k] <- rowSums(logLambda30_mat_temp)
-			### reps_max by 1
-		}
-		logLambda30_vec <- rowSums(logLambda30_mat)
+		logLambda30_vec <- GENERATE_LOG_DET_MATRIX_DIRICHLET_VARIATES(K = K, n_vec = n_vec, Sigma_mat = Sig_Dtld_mat_0, reps_max = reps_max)
 		### reps_max by 1
 		
 		logLambda3k_mat <- matrix(0, reps_max, K)
@@ -608,62 +739,59 @@ COMPUTE_THEORETICAL_DISTRIBUTIONS <- function(n_vec, p_vec, reps_max, nu_mat_0, 
 		
 		logLambda3_vec <- - p * n / 2 * sum(f_vec * log(f_vec)) + logLambda30_vec + logLambda3k_vec
 		### reps_max by 1
+		
+		logLambda3_chisq_vec <- - rchisq(reps_max, df = (M - 1) * K * (K + 3) / 2) / 2
+		### reps_max by 1
 	
 		################################
 		### calculate logLambda4_vec ###
 		################################
 		
-		A_Y_mat <- diag(M) - sqrt(f_vec) %*% t(sqrt(f_vec))
+		AY_mat <- diag(M) - sqrt(f_vec) %*% t(sqrt(f_vec))
 		### M by M
-		M_Y_mat <- matrix(0, nrow = p, ncol = M)
+		MY_mat <- matrix(0, nrow = p, ncol = M)
+		### p by M
 		for(m in 1 : M){
-			M_Y_mat[, m] <- nu_mat_0[m, ]
+			MY_mat[, m] <- nu_mat_0[m, ]
 		}
-		Omega_mat <- M_Y_mat %*% A_Y_mat %*% t(M_Y_mat)
+		
+		OmegaI_mat <- MY_mat %*% AY_mat %*% t(MY_mat)
 		### p by p
-		diag_Omega_vec <- diag(diag(diag(Xi_mat_0) ^ (- 1 / 2)) %*% Omega_mat %*% diag(diag(Xi_mat_0) ^ (- 1 / 2)))
-		### p by 1
+		OmegaI_diag_list <- COMPUTE_DIAGONAL_BLOCKS(OmegaI_mat, c(K, p_vec - 1))
+		### (K + 1) by from K to pk - 1
+		OmegaII_mat <- (M - 1) * solve(Xi_mat_0) %*% OmegaI_mat
+		### p by p
+		OmegaII_diag_list <- COMPUTE_DIAGONAL_BLOCKS(OmegaII_mat, c(K, p_vec - 1))
+		### (K + 1) by from K to pk - 1
 		
+		logLambda4_WilksLambda_vec <- (n / 2) * GENERATE_LOG_WILKS_LAMBDA_VARIATES(df1 = n - M, df2 = M - 1, Sigma_mat = Sig_Dtld_mat_0, OmegaI_mat = OmegaI_diag_list[[1]], reps_max = reps_max, GENERATE_WISHART_VARIATES = GENERATE_WISHART_VARIATES)
+		### reps_max by 1
 		
-		
-		logLambda40_mat <- matrix(0, reps_max, K) 
-		### reps_max by K
-		for(k in 1 : K){
-			end_p_bar_k <- p_bar[2, k]
-			### logLambda40_mat[, k] <- log(rbeta(reps_max, (n - M) / 2, (M - 1) / 2))
-			logLambda40_mat[, k] <- log(1 - rbeta(reps_max, (M - 1) / 2, (n - M) / 2, diag_Omega_vec[end_p_bar_k]))
-		}
-		logLambda40_vec <- (n / 2) * rowSums(logLambda40_mat)
-		### reps_max by 1 
-	
 		Y_k_mat <- matrix(0, reps_max, K)
 		### reps_max by K 
-		for(k in seq(K)){
-			within_p_bar_k <- p_bar[1, k] : (p_bar[2, k] - 1)
-			### Y_k_mat[, k] <- (p_vec[k] - 1) * log(rbeta(reps_max, (n - M) * (p_vec[k] - 1) / 2, (M - 1) * (p_vec[k] - 1) / 2))
-			Y_k_mat[, k] <- (p_vec[k] - 1) * log(1 - rbeta(reps_max, (M - 1) * (p_vec[k] - 1) / 2, (n - M) * (p_vec[k] - 1) / 2, sum(diag_Omega_vec[within_p_bar_k])))
+		for(k in 1 : K){
+			Y_k_mat[, k] <- (p_vec[k] - 1) * log(1 - rbeta(reps_max, (M - 1) * (p_vec[k] - 1) / 2, (n - M) * (p_vec[k] - 1) / 2, max(0, sum(diag(OmegaII_diag_list[[k + 1]])))))
 		}
-		logLambda4k_vec <- (n / 2) * rowSums(Y_k_mat)
-		### reps_max by 1 
-		
-		logLambda4B_vec <- logLambda40_vec + logLambda4k_vec
+		logLambda4B_vec <- logLambda4_WilksLambda_vec + (n / 2) * rowSums(Y_k_mat)
 		### reps_max by 1
 		
 		logF_mat <- matrix(0, reps_max, K)
 		### reps_max by K
 		for(k in 1 : K){
-			end_p_bar_k <- p_bar[2, k]
-			within_p_bar_k <- p_bar[1, k] : (p_bar[2, k] - 1)
-			logF_mat[, k] <- log1p((M - 1) * rf(reps_max, M - 1, n - M, diag_Omega_vec[end_p_bar_k]) / (n - M)) + (p_vec[k] - 1) * log1p((M - 1) * rf(reps_max, (p_vec[k] - 1) * (M - 1), (p_vec[k] - 1) * (n - M), sum(diag_Omega_vec[within_p_bar_k])) / (n - M))
+			logF_mat[, k] <- (p_vec[k] - 1) * log1p((M - 1) * rf(reps_max, (p_vec[k] - 1) * (M - 1), (p_vec[k] - 1) * (n - M), max(0, sum(diag(OmegaII_diag_list[[k + 1]])))) / (n - M))
 		}
-		logLambda4F_vec <- - (n / 2) * rowSums(logF_mat)
+		logLambda4F_vec <- logLambda4_WilksLambda_vec - (n / 2) * rowSums(logF_mat)
+		### reps_max by 1
+		
+		logLambda4_chisq_vec <- - rchisq(reps_max, df = (M - 1) * p) / 2
 		### reps_max by 1
 		
 		########################
 		### calculate G4_vec ###
 		########################
 		
-		G4_vec <- rep(0, reps_max)
+		G4Fsum_vec <- rep(0, reps_max)
+		### reps_max by 1
 		
 		mu_long_vec <- as.vector(t(mu_mat_0))
 		### (Mp) by 1
@@ -677,21 +805,16 @@ COMPUTE_THEORETICAL_DISTRIBUTIONS <- function(n_vec, p_vec, reps_max, nu_mat_0, 
 			### p by p
 			delta_k <- max(0, drop(t(mu_long_vec) %*% kronecker(MMt_mat, Bdiag_mat) %*% (mu_long_vec)))
 		
-			G4_vec <- G4_vec + (M - 1) * (p_vec[k] - 1) * rf(reps_max, df1 = (M - 1) * (p_vec[k] - 1), df2 = (p_vec[k] - 1) * (n - M), ncp = delta_k)
+			G4Fsum_vec <- G4Fsum_vec + (M - 1) * (p_vec[k] - 1) * rf(reps_max, df1 = (M - 1) * (p_vec[k] - 1), df2 = (p_vec[k] - 1) * (n - M), ncp = delta_k)
+			### reps_max by 1
 		}
 		
-		### Betz (1987) uses F-variate to approximate T0^2
-		### (1) para_l <- n - M - p - 1
-		### (2) para_b <- (para_l + para_q) * (para_l + p)/ ((para_l - 2) * (para_l + 1))
-		### (3) df_1 <- p * para_q
-		### (4) df_2 <- 4 + (p * para_q + 2) / (para_b - 1)
-		### (5) para_a <- p * para_q * (df_2 - 2) / (para_l * df_2)
-			
 		Sigma_Y_mat <- Sig_A_mat_0 %*% solve(diag(p_vec)) + Sig_B_mat_0
 		### K by K
 		Omega_Y_mat <- matrix(0, nrow = K, ncol = K)
-		### K by 1
+		### K by K
 		mu_bar_vec <- rep(0, p)
+		### p by 1
 		for(m in 1 : M){
 			mu_bar_vec <- mu_bar_vec + n_vec[m] * mu_mat_0[m, ]
 		}
@@ -700,7 +823,32 @@ COMPUTE_THEORETICAL_DISTRIBUTIONS <- function(n_vec, p_vec, reps_max, nu_mat_0, 
 		for(m in 1 : M){
 			Omega_Y_mat <- Omega_Y_mat + n_vec[m] * C_p_mat %*% (mu_mat_0[m, ] - mu_bar_vec) %*% t(mu_mat_0[m, ] - mu_bar_vec)  %*% t(C_p_mat) 
 		}
+		### K by K
 		
+		if(norm(Omega_Y_mat, "2") < 1e-10){
+			W1_array <- matrixsampling::rwishart(n = reps_max, nu = M - 1, Sigma = Sigma_Y_mat)
+			### K by K by reps_max
+		} else{
+			W1_array <- GENERATE_WISHART_VARIATES(n = reps_max, df_para = M - 1, Sigma_mat = Sigma_Y_mat, OmegaI_mat = Omega_Y_mat, type = 1)
+			### K by K by reps_max
+		}
+
+		W2_array <- matrixsampling::rwishart(n = reps_max, nu = n - M, Sigma = Sigma_Y_mat)
+		### K by K by reps_max
+		
+		G4_vec <- G4Fsum_vec + (n - M) * sapply(1 : dim(W1_array)[3], function(i) sum(diag(W1_array[,,i] %*% solve(W2_array[,,i]))))
+		### reps_max by 1
+		
+		G4_chisq_vec <- rchisq(reps_max, (M - 1) * p)
+		### reps_max by 1
+		
+		### Betz (1987) uses F-variate to approximate T0^2
+		### (1) para_l <- n - M - p - 1
+		### (2) para_b <- (para_l + para_q) * (para_l + p)/ ((para_l - 2) * (para_l + 1))
+		### (3) df_1 <- p * para_q
+		### (4) df_2 <- 4 + (p * para_q + 2) / (para_b - 1)
+		### (5) para_a <- p * para_q * (df_2 - 2) / (para_l * df_2)
+			
 		delta_kp1 <- sum(diag(solve(Sigma_Y_mat) %*% Omega_Y_mat))
 		
 		para_q <- M - 1
@@ -714,18 +862,27 @@ COMPUTE_THEORETICAL_DISTRIBUTIONS <- function(n_vec, p_vec, reps_max, nu_mat_0, 
 		df_2 <- 4 + (para_p * para_h + 2) / (para_b - 1)
 		para_a <- para_p * para_h * (df_2 - 2) / (para_l * df_2)
 		
-		G4_vec <- G4_vec + (n - M) * para_g * para_a * rf(reps_max, df1 = df_1, df2 = df_2, ncp = 0)
+		G4F_vec <- G4Fsum_vec + (n - M) * para_g * para_a * rf(reps_max, df1 = df_1, df2 = df_2, ncp = 0)
 	}
 	
 	return(list(
 		logLambda1_vec = logLambda1_vec,
+	logLambda1_box_vec = logLambda1_box_vec,
+   logLambda1_norm_vec = logLambda1_norm_vec,
+  logLambda1_chisq_vec = logLambda1_chisq_vec,    
 	   logLambda2B_vec = logLambda2B_vec, 
 	   logLambda2F_vec = logLambda2F_vec,
-		logLambda3_vec = logLambda3_vec, 
+  logLambda2_chisq_vec = logLambda2_chisq_vec,
+		logLambda3_vec = logLambda3_vec,
+  logLambda3_chisq_vec = logLambda3_chisq_vec,
 	   logLambda4B_vec = logLambda4B_vec,
 	   logLambda4F_vec = logLambda4F_vec, 
-			    G2_vec = G2_vec, 
-				G4_vec = G4_vec
+  logLambda4_chisq_vec = logLambda4_chisq_vec,
+			    G2_vec = G2_vec,
+		  G2_chisq_vec = G2_chisq_vec,	
+				G4_vec = G4_vec,
+		       G4F_vec = G4F_vec,
+		  G4_chisq_vec = G4_chisq_vec
 	))
 }
 
@@ -774,13 +931,10 @@ COMPUTE_P_VALUES <- function(n_vec, p_vec, X_bar_mat, mu_vec_test, reps_the_max,
 		p_vec = p_vec)
 	### p by p
 	
-	Gamma_mat_est <- COMPUTE_GAMMA_MATRIX(
-		A_mat = Sig_A_mat_est, 
-		B_mat = Sig_B_mat_est, 
-		p_vec = p_vec)
+	Gamma_mat <- COMPUTE_GAMMA_MATRIX(p_vec = p_vec)
 	### p by p
 	
-	Xi_mat_est <- diag(diag(Gamma_mat_est %*% Sigma_mat_est %*% t(Gamma_mat_est)))
+	Xi_mat_est <- Gamma_mat %*% Sigma_mat_est %*% t(Gamma_mat)
 	### p by p
 	
 	### Note: under the null hypotheses ###
@@ -824,10 +978,16 @@ COMPUTE_P_VALUES <- function(n_vec, p_vec, X_bar_mat, mu_vec_test, reps_the_max,
 			  COMPUTE_GAMMA_MATRIX = COMPUTE_GAMMA_MATRIX)
 	
 	if(M == 1){
+		
 		W1_the <- - res_the$logLambda1_vec
+		### W1box_the <- - res_the$logLambda1_box_vec 
+		### W1norm_the <- - res_the$logLambda1_norm_vec 
+		### W1chisq_the <- - res_the$logLambda1_chisq_vec 
 		W2B_the <- - res_the$logLambda2B_vec
 		W2F_the <- - res_the$logLambda2F_vec
+		### W2chisq_the <- - res_the$logLambda2_chisq_vec
 		G2_the <- res_the$G2_vec
+		### G2chisq_the <- res_the$G2_chisq_vec
 
 		Wodd_emp_est <- - res_emp[1]
 		Weve_emp_est <- - res_emp[2]
@@ -849,11 +1009,16 @@ COMPUTE_P_VALUES <- function(n_vec, p_vec, X_bar_mat, mu_vec_test, reps_the_max,
 		G_p <- mean(1 * (G_emp_est <= G2_the))
 	
 	} else if(M > 1){
+		
 		W3_the <- - res_the$logLambda3_vec
+		### W3chisq_the <- - res_the$logLambda3_chisq_vec
 		W4B_the <- - res_the$logLambda4B_vec
 		W4F_the <- - res_the$logLambda4F_vec
+		### W4chisq_the <- - res_the$logLambda4F_vec
 		G4_the <- res_the$G4_vec
-		
+		### G4chisq_the <- res_the$G4_chisq_vec
+		### G4F_the <- res_the$G4F_vec
+			
 		Wodd_emp_est <- - res_emp[1]
 		Weve_emp_est <- - res_emp[2]
 		G_emp_est <- res_emp[3]
@@ -889,12 +1054,12 @@ COMPUTE_P_VALUES <- function(n_vec, p_vec, X_bar_mat, mu_vec_test, reps_the_max,
 
 ESTIMATE_FDP <- function(est_method, Z_vec, v_vec, Sigma_mat, t_threshold_vec, reg_method = "L1", eps = .05, gama, kappa_0, plot_method = "-log"){
 	
-###################################################################
-### this function is modified based on the original R package   ###
-### "pfa" at https://CRAN.R-project.org/package=pfa, with 		###
-### maintainer Tracy Ke <zke@galton.uchicago.edu> and reference ###
-### Fan, Han and Gu (2012) JASA paper 							###
-###################################################################
+	###################################################################
+	### this function is modified based on the original R package   ###
+	### "pfa" at https://CRAN.R-project.org/package=pfa, with 		###
+	### maintainer Tracy Ke <zke@galton.uchicago.edu> and reference ###
+	### Fan, Han and Gu (2012) JASA paper 							###
+	###################################################################
   
 	### Z_vec: p by 1 test statistics
 	###        for "UB", it follows t-distribution with df of vk
@@ -1133,20 +1298,18 @@ EXTRACT_RAW_ADJ_FDP <- function(pfa_object, cutoff_vec, false_null_index_vec){
 	return(res)
 }
 
-
-#############################
-### Loading the real data ###
-#############################
+################################
+### Loading the EPSI dataset ###
+################################
 
 INPUT_ADDRESS <- "..."
 OUTPUT_ADDRESS <- "..."
-DATA_INPUT_FILENAME <- paste(INPUT_ADDRESS, "EPSI_DATASET_445.RData", sep = "/")
-### The real dataset is available upon request from the authors.
+DATA_INPUT_FILENAME <- paste(INPUT_ADDRESS, "...", sep = "/")
 load(DATA_INPUT_FILENAME)
+
+### loading the covariates ###
 subject_names <- rownames(EPSI_X)
 covariate_names <- colnames(EPSI_X)
-variable_names <- colnames(EPSI_Y)
-
 covariate <- data.frame(
 				Age = as.numeric(EPSI_X[, 1]), 
 				Gender = EPSI_X[, 2], 
@@ -1158,18 +1321,21 @@ covariate <- data.frame(
 rownames(covariate) <- subject_names
 colnames(covariate) <- covariate_names
 
+variable_names <- colnames(EPSI_Y)
+### 445 by 1
 EPSI_Y_scale <- EPSI_Y * 1e-4
 ### 78 by 445, re-scale the dataset
 set.seed(2024)
 EPSI_Y_impt_scale <- missForest::missForest(xmis = EPSI_Y_scale)$ximp
 ### 78 by 445
+set.seed(NULL)
 
-##############################################
-### Data analysis for the whole population ###
-##############################################
+##########################################
+### Data analysis for all participants ###
+##########################################
 
 M <- 1
-reps_the_max <- 1e5
+reps_the_max <- 1e4
 p_vec <- EPSI_p_vec
 K <- length(p_vec)
 p <- sum(p_vec)
@@ -1184,30 +1350,27 @@ X_bar_mat <- matrix(apply(EPSI_Y_scale, 2, mean, na.rm = TRUE), 1, p)
 
 S_list_full <- S_list_pair <- S_list_impt <- list()
 S_list_full[[1]] <- cov(EPSI_Y_scale, use = "everything")
+### na% = 0.767, non-na% = 0.233
 S_list_pair[[1]] <- cov(EPSI_Y_scale, use = "pairwise.complete.obs")
 S_list_impt[[1]] <- cov(EPSI_Y_impt_scale)
 
-### S_mat_full <- cov(EPSI_Y_scale, use = "everything")
-### na% = 0.767, non-na% = 0.233
-### S_mat_pair <- cov(EPSI_Y_scale, use = "pairwise.complete.obs")
-### S_mat_impt <- cov(EPSI_Y_impt_scale)
 res_S_full <- BEST_UNBIASED_ESTIMATOR(S_list_full[[1]], p_vec)
 res_S_pair <- BEST_UNBIASED_ESTIMATOR(S_list_pair[[1]], p_vec)
 res_S_impt <- BEST_UNBIASED_ESTIMATOR(S_list_impt[[1]], p_vec)
 res_S_full$A_mat
 res_S_full$B_mat
-res_S_pair$A_mat
-res_S_pair$B_mat
-res_S_impt$A_mat
-res_S_impt$B_mat
 ### eigen(res_S_full$A_mat)$values
 ### [1] 0.033422667 0.031827502 0.027734469 0.018134177 0.001453949
 ### eigen(res_S_full$A_mat + res_S_full$B_mat %*% diag(p_vec))$values
 ### [1] 6.83710786 3.38301073 0.82278479 0.44391934 0.07194174
+res_S_pair$A_mat
+res_S_pair$B_mat
 ### eigen(res_S_pair$A_mat)$values
 ### [1] 0.058146545 0.057259145 0.039535641 0.032403287 0.002614149
 ### eigen(res_S_pair$A_mat + res_S_pair$B_mat %*% diag(p_vec))$values
 ### [1] 5.89287977 2.44235246 0.83860218 0.44186765 0.07401528
+res_S_impt$A_mat
+res_S_impt$B_mat
 ### eigen(res_S_impt$A_mat)$values
 ### [1] 0.051673928 0.051154211 0.036186303 0.028875697 0.002352752
 ### eigen(res_S_impt$A_mat + res_S_impt$B_mat %*% diag(p_vec))$values
@@ -1231,24 +1394,66 @@ COMPUTE_P_VALUES(
 	COMPUTE_EMPIRICAL_LOG_LAMBDA_2 = COMPUTE_EMPIRICAL_LOG_LAMBDA_2, 
 	COMPUTE_EMPIRICAL_LOG_LAMBDA_3 = COMPUTE_EMPIRICAL_LOG_LAMBDA_3, 
 	COMPUTE_EMPIRICAL_LOG_LAMBDA_4 = COMPUTE_EMPIRICAL_LOG_LAMBDA_4)
+set.seed(NULL)
+
 ### S_list_full 
 ###          Lambda13  Lambda24B  Lambda24F           G
 ### statistics       NA        NA        NA 310365.1292
-### cutpoint         NA  249.3716  249.2493    496.2119
+### cutpoint        Inf  249.3561  248.8598    496.0935
 ### rejection        NA        NA        NA      1.0000
 ### p_value          NA        NA        NA      0.0000
+
+set.seed(2024)
+COMPUTE_P_VALUES(
+		  n_vec = n_vec, 
+		  p_vec = p_vec, 
+	  X_bar_mat = X_bar_mat, 
+	mu_vec_test = rep(1.645, p), 
+   reps_the_max = reps_the_max, 
+		 S_list = S_list_pair,
+	  sig_level = 0.05,		 
+		 COMPUTE_THEORETICAL_DISTRIBUTIONS = COMPUTE_THEORETICAL_DISTRIBUTIONS, 
+	COMPUTE_GAMMA_MATRIX = COMPUTE_GAMMA_MATRIX, 
+	COMPUTE_EMPIRICAL_TEST_STATISTICS_SAMPLE = COMPUTE_EMPIRICAL_TEST_STATISTICS_SAMPLE, 
+			BLOCK_HADAMARD_PRODUCT = BLOCK_HADAMARD_PRODUCT, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_1 = COMPUTE_EMPIRICAL_LOG_LAMBDA_1, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_2 = COMPUTE_EMPIRICAL_LOG_LAMBDA_2, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_3 = COMPUTE_EMPIRICAL_LOG_LAMBDA_3, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_4 = COMPUTE_EMPIRICAL_LOG_LAMBDA_4)
+set.seed(NULL)
+
 ### S_list_pair
 ###            Lambda13  Lambda24B  Lambda24F           G
-### statistics      Inf 21855.5479 21855.5479 239953.8668
-### cutpoint         NA   249.1284   249.1281    496.0704
+### statistics      Inf 21573.8566 21573.8566 239953.8668
+### cutpoint         NA   249.3561   248.8598    496.0935
 ### rejection        NA     1.0000     1.0000      1.0000
 ### p_value          NA     0.0000     0.0000      0.0000
+
+set.seed(2024)
+COMPUTE_P_VALUES(
+		  n_vec = n_vec, 
+		  p_vec = p_vec, 
+	  X_bar_mat = X_bar_mat, 
+	mu_vec_test = rep(1.645, p), 
+   reps_the_max = reps_the_max, 
+		 S_list = S_list_impt,
+	  sig_level = 0.05,		 
+		 COMPUTE_THEORETICAL_DISTRIBUTIONS = COMPUTE_THEORETICAL_DISTRIBUTIONS, 
+	COMPUTE_GAMMA_MATRIX = COMPUTE_GAMMA_MATRIX, 
+	COMPUTE_EMPIRICAL_TEST_STATISTICS_SAMPLE = COMPUTE_EMPIRICAL_TEST_STATISTICS_SAMPLE, 
+			BLOCK_HADAMARD_PRODUCT = BLOCK_HADAMARD_PRODUCT, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_1 = COMPUTE_EMPIRICAL_LOG_LAMBDA_1, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_2 = COMPUTE_EMPIRICAL_LOG_LAMBDA_2, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_3 = COMPUTE_EMPIRICAL_LOG_LAMBDA_3, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_4 = COMPUTE_EMPIRICAL_LOG_LAMBDA_4)
+set.seed(NULL)
+
 ### S_list_impt
 ###            Lambda13  Lambda24B Lambda24F           G
-### statistics      Inf 23129.4892 23129.489 259189.2379
-### cutpoint         NA   249.4065   249.287    495.9341
-### rejection        NA     1.0000     1.000      1.0000
-### p_value          NA     0.0000     0.000      0.0000
+### statistics      Inf 22842.3458 22842.3458 259072.5532
+### cutpoint         NA   249.3561   248.8598    496.0935
+### rejection        NA     1.0000     1.0000      1.0000
+### p_value          NA     0.0000     0.0000      0.0000
 
 X_bar_vec <- X_bar_mat[1, ] - rep(1.645, p)
 ### p by 1
@@ -1302,6 +1507,7 @@ TABLE_SUMMARY(EXTRACT_RAW_ADJ_FDP(pfa_object = res_pfa_est_full, cutoff_vec = t_
 ### 5.637989E-63
 variable_names[res_pfa_est_full$adjPvalue$Index[res_pfa_est_full$adjPvalue$p.value < 5.637989E-63]]
 ### 351
+set.seed(NULL)
 
 set.seed(2024)
 res_pfa_est_pair <- ESTIMATE_FDP(
@@ -1319,6 +1525,7 @@ TABLE_SUMMARY(EXTRACT_RAW_ADJ_FDP(pfa_object = res_pfa_est_pair, cutoff_vec = t_
 ### 3.6198E-60
 variable_names[res_pfa_est_pair$adjPvalue$Index[res_pfa_est_pair$adjPvalue$p.value < 3.6198E-60]]
 ### 334
+set.seed(NULL)
 
 set.seed(2024)
 res_pfa_est_impt <- ESTIMATE_FDP(
@@ -1334,13 +1541,176 @@ res_pfa_est_impt <- ESTIMATE_FDP(
 			   
 TABLE_SUMMARY(EXTRACT_RAW_ADJ_FDP(pfa_object = res_pfa_est_impt, cutoff_vec = t_threshold_vec, false_null_index_vec = NULL))
 ### 3.764018e-63
-variable_names[res_pfa_est_pair$adjPvalue$Index[res_pfa_est_pair$adjPvalue$p.value < 3.764018E-63]]
+variable_names[res_pfa_est_impt$adjPvalue$Index[res_pfa_est_impt$adjPvalue$p.value < 3.764018E-63]]
 ### 334
+set.seed(NULL)
 
 
-################################################
-### Data analysis for the sex sub-population ###
-################################################
+###################################################
+### Data analysis of left and right hemispheres ###
+###################################################
+
+Y_list <- Y_impt_list <- list()
+### M by n by p
+Y_list[[1]] <- EPSI_Y_scale[, c(
+					sort(variable_names[1   :  44])[c(1, 2, 3, 5, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 35, 36, 37, 38, 39)], 
+					sort(variable_names[90  : 133])[c(1, 2, 3, 5, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33)],
+					sort(variable_names[179 : 222])[c(1, 2, 3, 5, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 35, 36)],
+					sort(variable_names[268 : 311])[c(1, 2, 3, 5, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44)],
+					sort(variable_names[357 : 400])[c(1, 2, 3, 5, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 35, 36, 37, 38, 39, 40, 41, 42, 43)]
+)]
+### 78 by 171
+Y_list[[2]] <- EPSI_Y_scale[, c(
+					sort(variable_names[45  :  89])[c(1, 2, 3, 4, 6, 7, 8, 9, 10, 12, 13, 15, 16, 17, 18, 19, 21, 23, 24, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40)],
+					sort(variable_names[134 : 178])[c(1, 2, 3, 4, 6, 7, 8, 9, 10, 12, 13, 15, 16, 17, 18, 19, 21, 23, 24, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35 )],
+					sort(variable_names[223 : 267])[c(1, 2, 3, 4, 6, 7, 8, 9, 10, 12, 13, 15, 16, 17, 18, 19, 21, 23, 24, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37)],
+					sort(variable_names[312 : 356])[c(1, 2, 3, 4, 6, 7, 8, 9, 10, 12, 13, 15, 16, 17, 18, 19, 21, 23, 24, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45)],
+					sort(variable_names[401 : 445])[c(1, 2, 3, 4, 6, 7, 8, 9, 10, 12, 13, 15, 16, 17, 18, 19, 21, 23, 24, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44)]
+)]
+### 78 by 171
+Y_impt_list[[1]] <- EPSI_Y_impt_scale[, c(
+					sort(variable_names[1   :  44])[c(1, 2, 3, 5, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 35, 36, 37, 38, 39)], 
+					sort(variable_names[90  : 133])[c(1, 2, 3, 5, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33)],
+					sort(variable_names[179 : 222])[c(1, 2, 3, 5, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 35, 36)],
+					sort(variable_names[268 : 311])[c(1, 2, 3, 5, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44)],
+					sort(variable_names[357 : 400])[c(1, 2, 3, 5, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 35, 36, 37, 38, 39, 40, 41, 42, 43)]
+)]
+### 78 by 171
+Y_impt_list[[2]] <- EPSI_Y_impt_scale[, c(
+					sort(variable_names[45  :  89])[c(1, 2, 3, 4, 6, 7, 8, 9, 10, 12, 13, 15, 16, 17, 18, 19, 21, 23, 24, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40)],
+					sort(variable_names[134 : 178])[c(1, 2, 3, 4, 6, 7, 8, 9, 10, 12, 13, 15, 16, 17, 18, 19, 21, 23, 24, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35 )],
+					sort(variable_names[223 : 267])[c(1, 2, 3, 4, 6, 7, 8, 9, 10, 12, 13, 15, 16, 17, 18, 19, 21, 23, 24, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37)],
+					sort(variable_names[312 : 356])[c(1, 2, 3, 4, 6, 7, 8, 9, 10, 12, 13, 15, 16, 17, 18, 19, 21, 23, 24, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45)],
+					sort(variable_names[401 : 445])[c(1, 2, 3, 4, 6, 7, 8, 9, 10, 12, 13, 15, 16, 17, 18, 19, 21, 23, 24, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44)]
+)]
+### 78 by 171
+
+M <- 2
+reps_the_max <- 1e5
+p_vec <- c(39 - 5, 39 - 10, 39 - 8, 39, 39 - 1)
+p <- sum(p_vec)
+n_vec <- unlist(lapply(Y_list, nrow))
+n <- sum(n_vec)
+
+res_S_full_1 <- BEST_UNBIASED_ESTIMATOR(cov(Y_list[[1]], use = "everything"), p_vec)
+res_S_full_2 <- BEST_UNBIASED_ESTIMATOR(cov(Y_list[[2]], use = "everything"), p_vec)
+res_S_pair_1 <- BEST_UNBIASED_ESTIMATOR(cov(Y_list[[1]], use = "pairwise.complete.obs"), p_vec)
+res_S_pair_2 <- BEST_UNBIASED_ESTIMATOR(cov(Y_list[[2]], use = "pairwise.complete.obs"), p_vec)
+res_S_impt_1 <- BEST_UNBIASED_ESTIMATOR(cov(Y_impt_list[[1]]), p_vec)
+res_S_impt_2 <- BEST_UNBIASED_ESTIMATOR(cov(Y_impt_list[[2]]), p_vec)
+
+res_S_full_1$A_mat
+res_S_full_1$B_mat
+res_S_full_2$A_mat
+res_S_full_2$B_mat
+
+res_S_pair_1$A_mat
+res_S_pair_1$B_mat
+res_S_pair_2$A_mat
+res_S_pair_2$B_mat
+
+res_S_impt_1$A_mat
+res_S_impt_1$B_mat
+res_S_impt_2$A_mat
+res_S_impt_2$B_mat
+
+X_bar_mat <- matrix(0, nrow = M, ncol = p)
+### 2 by 171
+### summary(X_bar_mat[2, ] - X_bar_mat[1, ])
+###      Min.   1st Qu.    Median      Mean   3rd Qu.      Max. 
+### -0.357810 -0.038635 -0.003153 -0.001094  0.052460  0.334254 
+
+S_list_full <- S_list_pair <- S_list_impt <- list()
+for(m in 1 : M){
+	X_bar_mat[m, ] <- apply(Y_list[[m]], 2, mean, na.rm = TRUE)
+	### 171 by 1
+	S_list_full[[m]] <- cov(Y_list[[m]], use = "everything")
+	S_list_pair[[m]] <- cov(Y_list[[m]], use = "pairwise.complete.obs")
+	S_list_impt[[m]] <- cov(Y_impt_list[[m]])	
+}
+
+set.seed(2024)
+COMPUTE_P_VALUES(
+		  n_vec = n_vec, 
+		  p_vec = p_vec, 
+	  X_bar_mat = X_bar_mat, 
+	mu_vec_test = NULL, 
+   reps_the_max = reps_the_max, 
+		 S_list = S_list_full, 
+	  sig_level = 0.05,
+		 COMPUTE_THEORETICAL_DISTRIBUTIONS = COMPUTE_THEORETICAL_DISTRIBUTIONS, 
+	COMPUTE_GAMMA_MATRIX = COMPUTE_GAMMA_MATRIX, 
+	COMPUTE_EMPIRICAL_TEST_STATISTICS_SAMPLE = COMPUTE_EMPIRICAL_TEST_STATISTICS_SAMPLE, 
+			BLOCK_HADAMARD_PRODUCT = BLOCK_HADAMARD_PRODUCT, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_1 = COMPUTE_EMPIRICAL_LOG_LAMBDA_1, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_2 = COMPUTE_EMPIRICAL_LOG_LAMBDA_2, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_3 = COMPUTE_EMPIRICAL_LOG_LAMBDA_3, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_4 = COMPUTE_EMPIRICAL_LOG_LAMBDA_4)
+set.seed(NULL)
+
+### S_list_full
+###            Lambda13 Lambda24B Lambda24F         G
+### statistics       NA        NA        NA 2701.6296
+### cutpoint   16.31983  102.2728  102.3129  203.0837
+### rejection        NA        NA        NA    1.0000
+### p_value          NA        NA        NA    0.0000
+
+set.seed(2024)
+COMPUTE_P_VALUES(
+		  n_vec = n_vec, 
+		  p_vec = p_vec, 
+	  X_bar_mat = X_bar_mat, 
+	mu_vec_test = NULL, 
+   reps_the_max = reps_the_max, 
+		 S_list = S_list_pair, 
+	  sig_level = 0.05,
+		 COMPUTE_THEORETICAL_DISTRIBUTIONS = COMPUTE_THEORETICAL_DISTRIBUTIONS, 
+	COMPUTE_GAMMA_MATRIX = COMPUTE_GAMMA_MATRIX, 
+	COMPUTE_EMPIRICAL_TEST_STATISTICS_SAMPLE = COMPUTE_EMPIRICAL_TEST_STATISTICS_SAMPLE, 
+			BLOCK_HADAMARD_PRODUCT = BLOCK_HADAMARD_PRODUCT, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_1 = COMPUTE_EMPIRICAL_LOG_LAMBDA_1, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_2 = COMPUTE_EMPIRICAL_LOG_LAMBDA_2, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_3 = COMPUTE_EMPIRICAL_LOG_LAMBDA_3, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_4 = COMPUTE_EMPIRICAL_LOG_LAMBDA_4)
+set.seed(NULL)
+
+### S_list_pair
+###             Lambda13 Lambda24B Lambda24F         G
+### statistics   9.858856  815.2644  815.2644 1680.3355
+### cutpoint    16.319834  102.2728  102.3129  203.0837
+### rejection    0.000000    1.0000    1.0000    1.0000
+### p_value      0.524740    0.0000    0.0000    0.0000
+
+set.seed(2024)
+COMPUTE_P_VALUES(
+		  n_vec = n_vec, 
+		  p_vec = p_vec, 
+	  X_bar_mat = X_bar_mat, 
+	mu_vec_test = NULL, 
+   reps_the_max = reps_the_max, 
+		 S_list = S_list_impt, 
+	  sig_level = 0.05,
+		 COMPUTE_THEORETICAL_DISTRIBUTIONS = COMPUTE_THEORETICAL_DISTRIBUTIONS, 
+	COMPUTE_GAMMA_MATRIX = COMPUTE_GAMMA_MATRIX, 
+	COMPUTE_EMPIRICAL_TEST_STATISTICS_SAMPLE = COMPUTE_EMPIRICAL_TEST_STATISTICS_SAMPLE, 
+			BLOCK_HADAMARD_PRODUCT = BLOCK_HADAMARD_PRODUCT, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_1 = COMPUTE_EMPIRICAL_LOG_LAMBDA_1, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_2 = COMPUTE_EMPIRICAL_LOG_LAMBDA_2, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_3 = COMPUTE_EMPIRICAL_LOG_LAMBDA_3, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_4 = COMPUTE_EMPIRICAL_LOG_LAMBDA_4)
+set.seed(NULL)
+
+### S_list_impt
+###             Lambda13 Lambda24B Lambda24F         G
+### statistics   9.262879  867.2951  867.2951 1791.8710
+### cutpoint    16.319834  102.2728  102.3129  203.0837
+### rejection    0.000000    1.0000    1.0000    1.0000
+### p_value      0.598700    0.0000    0.0000    0.0000
+
+
+##########################################################
+### Data analysis for the gender-specific participants ###
+##########################################################
 
 Y_list <- Y_impt_list <- list()
 ### M by n by p
@@ -1369,40 +1739,36 @@ res_S_impt_2 <- BEST_UNBIASED_ESTIMATOR(cov(Y_impt_list[[2]]), p_vec)
 
 res_S_full_1$A_mat
 res_S_full_1$B_mat
-res_S_full_2$A_mat
-res_S_full_2$B_mat
-
-res_S_pair_1$A_mat
-res_S_pair_1$B_mat
-res_S_pair_2$A_mat
-res_S_pair_2$B_mat
-
-res_S_impt_1$A_mat
-res_S_impt_1$B_mat
-res_S_impt_2$A_mat
-res_S_impt_2$B_mat
-
 ### eigen(res_S_full_1$A_mat)$values
 ### [1] 0.044201640 0.036598133 0.028684172 0.018996229 0.001421158
 ### eigen(res_S_full_1$A_mat + res_S_full_1$B_mat %*% diag(p_vec))$values
 ### [1] 7.65947014 3.34428094 0.83628940 0.19767087 0.06882667
+res_S_full_2$A_mat
+res_S_full_2$B_mat
 ### eigen(res_S_full_2$A_mat)$values
 ### [1] 0.037679548 0.036163372 0.030634340 0.021916172 0.001982911
 ### eigen(res_S_full_2$A_mat + res_S_full_2$B_mat %*% diag(p_vec))$values
 ### [1] 6.9297950 1.9978298 0.8940038 0.6657509 0.0494033
+res_S_pair_1$A_mat
+res_S_pair_1$B_mat
 ### eigen(res_S_pair_1$A_mat)$values
 ### [1] 0.06189206 0.05889223 0.03927825 0.03262717 0.00258133
 ### eigen(res_S_pair_1$A_mat + res_S_pair_1$B_mat %*% diag(p_vec))$values
 ### [1] 5.8415337 2.5167944 0.8251106 0.1885787 0.0751556
+res_S_pair_2$A_mat
+res_S_pair_2$B_mat
 ### eigen(res_S_pair_2$A_mat)$values
 ### [1] 0.054735808 0.053999447 0.039103494 0.030569062 0.002613425
 ### eigen(res_S_pair_2$A_mat + res_S_pair_2$B_mat %*% diag(p_vec))$values
 ### [1] 6.46819174 1.64761907 0.84258428 0.66558660 0.04618525
-
+res_S_impt_1$A_mat
+res_S_impt_1$B_mat
 ### eigen(res_S_impt_1$A_mat)$values
 ### [1] 0.055964807 0.052273504 0.034521893 0.028593453 0.002255068
 ### eigen(res_S_impt_1$A_mat + res_S_impt_1$B_mat %*% diag(p_vec))$values
 ### [1] 5.99637328 2.44217070 0.77866862 0.18338471 0.07033503
+res_S_impt_2$A_mat
+res_S_impt_2$B_mat
 ### eigen(res_S_impt_2$A_mat)$values
 ### [1] 0.049679870 0.046584197 0.036756182 0.027743807 0.002399256
 ### eigen(res_S_impt_2$A_mat + res_S_impt_2$B_mat %*% diag(p_vec))$values
@@ -1440,29 +1806,70 @@ COMPUTE_P_VALUES(
 	COMPUTE_EMPIRICAL_LOG_LAMBDA_2 = COMPUTE_EMPIRICAL_LOG_LAMBDA_2, 
 	COMPUTE_EMPIRICAL_LOG_LAMBDA_3 = COMPUTE_EMPIRICAL_LOG_LAMBDA_3, 
 	COMPUTE_EMPIRICAL_LOG_LAMBDA_4 = COMPUTE_EMPIRICAL_LOG_LAMBDA_4)
+set.seed(NULL)
 
 ### S_list_full
 ###            Lambda13 Lambda24B Lambda24F         G
 ### statistics       NA        NA        NA 1711.9013
-### cutpoint   9.459623  252.5214  252.6089  496.1173
+### cutpoint   17.07323  252.5486  252.6230  496.2734
 ### rejection        NA        NA        NA    1.0000
 ### p_value          NA        NA        NA    0.0000
+
+set.seed(2024)
+COMPUTE_P_VALUES(
+		  n_vec = n_vec, 
+		  p_vec = p_vec, 
+	  X_bar_mat = X_bar_mat, 
+	mu_vec_test = NULL, 
+   reps_the_max = reps_the_max, 
+		 S_list = S_list_pair, 
+	  sig_level = 0.05,
+		 COMPUTE_THEORETICAL_DISTRIBUTIONS = COMPUTE_THEORETICAL_DISTRIBUTIONS, 
+	COMPUTE_GAMMA_MATRIX = COMPUTE_GAMMA_MATRIX, 
+	COMPUTE_EMPIRICAL_TEST_STATISTICS_SAMPLE = COMPUTE_EMPIRICAL_TEST_STATISTICS_SAMPLE, 
+			BLOCK_HADAMARD_PRODUCT = BLOCK_HADAMARD_PRODUCT, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_1 = COMPUTE_EMPIRICAL_LOG_LAMBDA_1, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_2 = COMPUTE_EMPIRICAL_LOG_LAMBDA_2, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_3 = COMPUTE_EMPIRICAL_LOG_LAMBDA_3, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_4 = COMPUTE_EMPIRICAL_LOG_LAMBDA_4)
+set.seed(NULL)
+
 ### S_list_pair
 ###             Lambda13 Lambda24B Lambda24F         G
-### statistics 20.898064  510.5662  510.5662 1011.3286
-### cutpoint    9.442711  252.5747  252.5052  496.3611
+### statistics  28.11175  510.2176  510.2176 1011.3286
+### cutpoint    17.07323  252.5486  252.6230  496.2734
 ### rejection   1.000000    1.0000    1.0000    1.0000
 ### p_value     0.000010    0.0000    0.0000    0.0000
+
+set.seed(2024)
+COMPUTE_P_VALUES(
+		  n_vec = n_vec, 
+		  p_vec = p_vec, 
+	  X_bar_mat = X_bar_mat, 
+	mu_vec_test = NULL, 
+   reps_the_max = reps_the_max, 
+		 S_list = S_list_impt, 
+	  sig_level = 0.05,
+		 COMPUTE_THEORETICAL_DISTRIBUTIONS = COMPUTE_THEORETICAL_DISTRIBUTIONS, 
+	COMPUTE_GAMMA_MATRIX = COMPUTE_GAMMA_MATRIX, 
+	COMPUTE_EMPIRICAL_TEST_STATISTICS_SAMPLE = COMPUTE_EMPIRICAL_TEST_STATISTICS_SAMPLE, 
+			BLOCK_HADAMARD_PRODUCT = BLOCK_HADAMARD_PRODUCT, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_1 = COMPUTE_EMPIRICAL_LOG_LAMBDA_1, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_2 = COMPUTE_EMPIRICAL_LOG_LAMBDA_2, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_3 = COMPUTE_EMPIRICAL_LOG_LAMBDA_3, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_4 = COMPUTE_EMPIRICAL_LOG_LAMBDA_4)
+set.seed(NULL)
+
 ### S_list_impt
 ###             Lambda13 Lambda24B Lambda24F         G
-### statistics 27.983891  567.5910  567.5910 1126.2402
-### cutpoint    9.434125  252.6117  252.4896  495.9007
+### statistics  35.53377  567.1464  567.1464 1126.0980
+### cutpoint    17.07323  252.5486  252.6230  496.2734
 ### rejection   1.000000    1.0000    1.0000    1.0000
 ### p_value     0.000000    0.0000    0.0000    0.0000
 
-################################################
-### Data analysis for the age sub-population ###
-################################################
+#######################################################
+### Data analysis for the age-specific participants ###
+#######################################################
 
 Y_list <- Y_impt_list <- list()
 ### M by n by p
@@ -1498,61 +1905,59 @@ res_S_impt_3 <- BEST_UNBIASED_ESTIMATOR(cov(Y_impt_list[[3]]), p_vec)
 
 res_S_full_1$A_mat
 res_S_full_1$B_mat
-res_S_full_2$A_mat
-res_S_full_2$B_mat
-res_S_full_3$A_mat
-res_S_full_3$B_mat
-
-res_S_pair_1$A_mat
-res_S_pair_1$B_mat
-res_S_pair_2$A_mat
-res_S_pair_2$B_mat
-res_S_pair_3$A_mat
-res_S_pair_3$B_mat
-
-res_S_impt_1$A_mat
-res_S_impt_1$B_mat
-res_S_impt_2$A_mat
-res_S_impt_2$B_mat
-res_S_impt_3$A_mat
-res_S_impt_3$B_mat
-
 ### eigen(res_S_full_1$A_mat)$values
 ### [1] 0.053350926 0.046277222 0.029753252 0.021366650 0.001825706
 ### eigen(res_S_full_1$A_mat + res_S_full_1$B_mat %*% diag(p_vec))$values
 ### [1] 7.53600902 1.51036103 0.64065973 0.42692385 0.04787724
+res_S_full_2$A_mat
+res_S_full_2$B_mat
 ### eigen(res_S_full_2$A_mat)$values
 ### [1] 0.035795920 0.035137335 0.022520712 0.017365453 0.001427441
 ### eigen(res_S_full_2$A_mat + res_S_full_2$B_mat %*% diag(p_vec))$values
 ### [1] 2.8136713 1.5157808 0.7476768 0.3002051 0.0684199
+res_S_full_3$A_mat
+res_S_full_3$B_mat
 ### eigen(res_S_full_3$A_mat)$values
 ### [1] 0.04179828 0.03883030 0.03446221 0.02600713 0.00191751
 ### eigen(res_S_full_3$A_mat + res_S_full_3$B_mat %*% diag(p_vec))$values
 ### [1] 3.79089335 1.90023350 0.89320526 0.23677298 0.09200392
+res_S_pair_1$A_mat
+res_S_pair_1$B_mat
 ### eigen(res_S_pair_1$A_mat)$values
 ### [1] 0.062057464 0.059649342 0.038759132 0.034896836 0.002794045
 ### eigen(res_S_pair_1$A_mat + res_S_pair_1$B_mat %*% diag(p_vec))$values
 ### [1] 4.19144130 1.01010556 0.65710342 0.27772721 0.06211394
+res_S_pair_2$A_mat
+res_S_pair_2$B_mat
 ### eigen(res_S_pair_2$A_mat)$values
 ### [1] 0.059320545 0.049907920 0.028023137 0.025702080 0.001941917
 ### eigen(res_S_pair_2$A_mat + res_S_pair_2$B_mat %*% diag(p_vec))$values
 ### [1] 2.8835565 1.7162349 0.7214563 0.2823036 0.0623552
+res_S_pair_3$A_mat
+res_S_pair_3$B_mat
 ### eigen(res_S_pair_3$A_mat)$values
 ### [1] 0.056037606 0.049568509 0.043730484 0.034145290 0.002623045
 ### eigen(res_S_pair_3$A_mat + res_S_pair_3$B_mat %*% diag(p_vec))$values
 ### [1] 3.3021339 1.6923830 0.8384606 0.1914089 0.0828767
+res_S_impt_1$A_mat
+res_S_impt_1$B_mat
 ### eigen(res_S_impt_1$A_mat)$values
 ### [1] 0.057748329 0.054646582 0.035820792 0.031251166 0.002552982
 ### eigen(res_S_impt_1$A_mat + res_S_impt_1$B_mat %*% diag(p_vec))$values
 ### [1] 4.38111914 1.10261411 0.62655781 0.29319395 0.05478817
+res_S_impt_2$A_mat
+res_S_impt_2$B_mat
 ### eigen(res_S_impt_2$A_mat)$values
 ### [1] 0.045368266 0.043477349 0.025624045 0.022916805 0.001762165
 ### eigen(res_S_impt_2$A_mat + res_S_impt_2$B_mat %*% diag(p_vec))$values
 ### [1] 2.6869521 1.6834754 0.6873597 0.2820097 0.0603412
+res_S_impt_3$A_mat
+res_S_impt_3$B_mat
 ### eigen(res_S_impt_3$A_mat)$values
 ### [1] 0.049104708 0.044334627 0.039424316 0.029969615 0.002306695
 ### eigen(res_S_impt_3$A_mat + res_S_impt_3$B_mat %*% diag(p_vec))$values
 ### [1] 3.24485781 1.68413378 0.77891118 0.19432088 0.07665291
+
 
 X_bar_mat <- matrix(0, nrow = M, ncol = p)
 ### 3 by 445
@@ -1589,23 +1994,64 @@ COMPUTE_P_VALUES(
 	COMPUTE_EMPIRICAL_LOG_LAMBDA_2 = COMPUTE_EMPIRICAL_LOG_LAMBDA_2, 
 	COMPUTE_EMPIRICAL_LOG_LAMBDA_3 = COMPUTE_EMPIRICAL_LOG_LAMBDA_3, 
 	COMPUTE_EMPIRICAL_LOG_LAMBDA_4 = COMPUTE_EMPIRICAL_LOG_LAMBDA_4)
+set.seed(NULL)
 
 ### S_list_full
 ###            Lambda13 Lambda24B Lambda24F         G
 ### statistics       NA        NA        NA 5036.7394
-### cutpoint   16.53294  493.1566  493.0732  963.5867
+### cutpoint   31.45204  493.3586  493.3703  962.9917
 ### rejection        NA        NA        NA    1.0000
 ### p_value          NA        NA        NA    0.0000
+
+set.seed(2024)
+COMPUTE_P_VALUES(
+		  n_vec = n_vec, 
+		  p_vec = p_vec, 
+	  X_bar_mat = X_bar_mat, 
+	mu_vec_test = NULL, 
+   reps_the_max = reps_the_max, 
+		 S_list = S_list_pair, 
+	  sig_level = 0.05,
+		 COMPUTE_THEORETICAL_DISTRIBUTIONS = COMPUTE_THEORETICAL_DISTRIBUTIONS, 
+	COMPUTE_GAMMA_MATRIX = COMPUTE_GAMMA_MATRIX, 
+	COMPUTE_EMPIRICAL_TEST_STATISTICS_SAMPLE = COMPUTE_EMPIRICAL_TEST_STATISTICS_SAMPLE, 
+			BLOCK_HADAMARD_PRODUCT = BLOCK_HADAMARD_PRODUCT, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_1 = COMPUTE_EMPIRICAL_LOG_LAMBDA_1, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_2 = COMPUTE_EMPIRICAL_LOG_LAMBDA_2, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_3 = COMPUTE_EMPIRICAL_LOG_LAMBDA_3, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_4 = COMPUTE_EMPIRICAL_LOG_LAMBDA_4)
+set.seed(NULL)
+
 ### S_list_pair
 ###             Lambda13 Lambda24B Lambda24F         G
-### statistics 166.80104 1496.8884 1496.8884 3053.1449
-### cutpoint    16.55976  493.2534  493.0556  962.6126
+### statistics 180.59594 1471.5716 1471.5716 3053.1449
+### cutpoint    31.45204  493.3586  493.3703  962.9917
 ### rejection    1.00000    1.0000    1.0000    1.0000
 ### p_value      0.00000    0.0000    0.0000    0.0000
+
+set.seed(2024)
+COMPUTE_P_VALUES(
+		  n_vec = n_vec, 
+		  p_vec = p_vec, 
+	  X_bar_mat = X_bar_mat, 
+	mu_vec_test = NULL, 
+   reps_the_max = reps_the_max, 
+		 S_list = S_list_impt, 
+	  sig_level = 0.05,
+		 COMPUTE_THEORETICAL_DISTRIBUTIONS = COMPUTE_THEORETICAL_DISTRIBUTIONS, 
+	COMPUTE_GAMMA_MATRIX = COMPUTE_GAMMA_MATRIX, 
+	COMPUTE_EMPIRICAL_TEST_STATISTICS_SAMPLE = COMPUTE_EMPIRICAL_TEST_STATISTICS_SAMPLE, 
+			BLOCK_HADAMARD_PRODUCT = BLOCK_HADAMARD_PRODUCT, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_1 = COMPUTE_EMPIRICAL_LOG_LAMBDA_1, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_2 = COMPUTE_EMPIRICAL_LOG_LAMBDA_2, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_3 = COMPUTE_EMPIRICAL_LOG_LAMBDA_3, 
+	COMPUTE_EMPIRICAL_LOG_LAMBDA_4 = COMPUTE_EMPIRICAL_LOG_LAMBDA_4)
+set.seed(NULL)
+
 ### S_list_impt
 ###             Lambda13 Lambda24B Lambda24F         G
-### statistics 172.01010 1667.3736 1667.3736 3417.4794
-### cutpoint    16.52212  493.0129  493.3332  963.2381
+### statistics 184.17102 1641.3474 1641.3474 3417.2952
+### cutpoint    31.45204  493.3586  493.3703  962.9917
 ### rejection    1.00000    1.0000    1.0000    1.0000
 ### p_value      0.00000    0.0000    0.0000    0.0000
 
@@ -1623,6 +2069,8 @@ Y_upp <- EPSI_Y[rownames(subset(covariate, Age > 50)), ]
 
 set.seed(2024)
 EPSI_Z <- missForest::missForest(xmis = EPSI_Y)$ximp
+set.seed(NULL)
+
 Z_a <- EPSI_Z
 Z_m <- EPSI_Z[rownames(subset(covariate, Gender == "Male")), ]
 Z_f <- EPSI_Z[rownames(subset(covariate, Gender == "Female")), ]
@@ -1653,7 +2101,8 @@ plot_Y_a <- ggplot2::ggplot(
 				data = reshape2::melt(cor_Y_a), 
 			 mapping = aes(x = Var1, y = Var2, fill = value)) + 
   ggplot2::geom_tile() +
-  ggplot2::scale_fill_gradientn(colours = pals::coolwarm(100), 
+  ggplot2::scale_fill_gradientn(colours = pals::coolwarm(100),
+								 limits = c(- 1, 1),
 								  guide = "colourbar") +
   scale_y_discrete(limits = rev) + 
   theme_void()
@@ -1663,6 +2112,7 @@ plot_Y_m <- ggplot2::ggplot(
 			 mapping = aes(x = Var1, y = Var2, fill = value)) + 
   ggplot2::geom_tile() +
   ggplot2::scale_fill_gradientn(colours = pals::coolwarm(100), 
+								 limits = c(- 1, 1),
 								  guide = "colourbar") +
   scale_y_discrete(limits = rev) + 
   theme_void()
@@ -1671,7 +2121,8 @@ plot_Y_f <- ggplot2::ggplot(
 				data = reshape2::melt(cor_Y_f), 
 			 mapping = aes(x = Var1, y = Var2, fill = value)) + 
   ggplot2::geom_tile() +
-  ggplot2::scale_fill_gradientn(colours = pals::coolwarm(100), 
+  ggplot2::scale_fill_gradientn(colours = pals::coolwarm(100),
+								 limits = c(- 1, 1),
 								  guide = "colourbar") +
   scale_y_discrete(limits = rev) + 
   theme_void()   
@@ -1681,6 +2132,7 @@ plot_Y_low <- ggplot2::ggplot(
 			 mapping = aes(x = Var1, y = Var2, fill = value)) + 
   ggplot2::geom_tile() +
   ggplot2::scale_fill_gradientn(colours = pals::coolwarm(100), 
+								 limits = c(- 1, 1),
 								  guide = "colourbar") +
   scale_y_discrete(limits = rev) + 
   theme_void()  
@@ -1690,6 +2142,7 @@ plot_Y_mid <- ggplot2::ggplot(
 			 mapping = aes(x = Var1, y = Var2, fill = value)) + 
   ggplot2::geom_tile() +
   ggplot2::scale_fill_gradientn(colours = pals::coolwarm(100), 
+								 limits = c(- 1, 1),
 								  guide = "colourbar") +
   scale_y_discrete(limits = rev) + 
   theme_void()
@@ -1699,6 +2152,7 @@ plot_Y_upp <- ggplot2::ggplot(
 			 mapping = aes(x = Var1, y = Var2, fill = value)) + 
   ggplot2::geom_tile() +
   ggplot2::scale_fill_gradientn(colours = pals::coolwarm(100), 
+								 limits = c(- 1, 1),
 								  guide = "colourbar") +
   scale_y_discrete(limits = rev) + 
   theme_void()
@@ -1708,6 +2162,7 @@ plot_Z_a <- ggplot2::ggplot(
 			 mapping = aes(x = Var1, y = Var2, fill = value)) + 
   ggplot2::geom_tile() +
   ggplot2::scale_fill_gradientn(colours = pals::coolwarm(100), 
+								 limits = c(- 1, 1),
 								  guide = "colourbar") +
   scale_y_discrete(limits = rev) + 
   theme_void() 
@@ -1717,6 +2172,7 @@ plot_Z_m <- ggplot2::ggplot(
 			 mapping = aes(x = Var1, y = Var2, fill = value)) + 
   ggplot2::geom_tile() +
   ggplot2::scale_fill_gradientn(colours = pals::coolwarm(100), 
+								 limits = c(- 1, 1),
 								  guide = "colourbar") +
   scale_y_discrete(limits = rev) + 
   theme_void()
@@ -1726,6 +2182,7 @@ plot_Z_f <- ggplot2::ggplot(
 			 mapping = aes(x = Var1, y = Var2, fill = value)) + 
   ggplot2::geom_tile() +
   ggplot2::scale_fill_gradientn(colours = pals::coolwarm(100), 
+								 limits = c(- 1, 1),
 								  guide = "colourbar") +
   scale_y_discrete(limits = rev) + 
   theme_void()   
@@ -1735,6 +2192,7 @@ plot_Z_low <- ggplot2::ggplot(
 			 mapping = aes(x = Var1, y = Var2, fill = value)) + 
   ggplot2::geom_tile() +
   ggplot2::scale_fill_gradientn(colours = pals::coolwarm(100), 
+								 limits = c(- 1, 1),
 								  guide = "colourbar") +
   scale_y_discrete(limits = rev) + 
   theme_void()
@@ -1744,6 +2202,7 @@ plot_Z_mid <- ggplot2::ggplot(
 			 mapping = aes(x = Var1, y = Var2, fill = value)) + 
   ggplot2::geom_tile() +
   ggplot2::scale_fill_gradientn(colours = pals::coolwarm(100), 
+								 limits = c(- 1, 1),
 								  guide = "colourbar") +
   scale_y_discrete(limits = rev) + 
   theme_void()
@@ -1753,24 +2212,25 @@ plot_Z_upp <- ggplot2::ggplot(
 			 mapping = aes(x = Var1, y = Var2, fill = value)) + 
   ggplot2::geom_tile() +
   ggplot2::scale_fill_gradientn(colours = pals::coolwarm(100), 
+								 limits = c(- 1, 1),
 								  guide = "colourbar") +
   scale_y_discrete(limits = rev) + 
   theme_void()   
  
-DATA_OUTPUT_FILENAME_Y_a <- paste(OUTPUT_ADDRESS, "plot_Y_a.pdf", sep = "/")
-DATA_OUTPUT_FILENAME_Y_m <- paste(OUTPUT_ADDRESS, "plot_Y_m.pdf", sep = "/")
-DATA_OUTPUT_FILENAME_Y_f <- paste(OUTPUT_ADDRESS, "plot_Y_f.pdf", sep = "/")
-DATA_OUTPUT_FILENAME_Y_low <- paste(OUTPUT_ADDRESS, "plot_Y_low.pdf", sep = "/")
-DATA_OUTPUT_FILENAME_Y_mid <- paste(OUTPUT_ADDRESS, "plot_Y_mid.pdf", sep = "/")
-DATA_OUTPUT_FILENAME_Y_upp <- paste(OUTPUT_ADDRESS, "plot_Y_upp.pdf", sep = "/")
+DATA_OUTPUT_FILENAME_Y_a <- paste(OUTPUT_ADDRESS, "plot_Y_a.tiff", sep = "/")
+DATA_OUTPUT_FILENAME_Y_m <- paste(OUTPUT_ADDRESS, "plot_Y_m.tiff", sep = "/")
+DATA_OUTPUT_FILENAME_Y_f <- paste(OUTPUT_ADDRESS, "plot_Y_f.tiff", sep = "/")
+DATA_OUTPUT_FILENAME_Y_low <- paste(OUTPUT_ADDRESS, "plot_Y_low.tiff", sep = "/")
+DATA_OUTPUT_FILENAME_Y_mid <- paste(OUTPUT_ADDRESS, "plot_Y_mid.tiff", sep = "/")
+DATA_OUTPUT_FILENAME_Y_upp <- paste(OUTPUT_ADDRESS, "plot_Y_upp.tiff", sep = "/")
 
-DATA_OUTPUT_FILENAME_Z_a <- paste(OUTPUT_ADDRESS, "plot_Z_a.pdf", sep = "/")
-DATA_OUTPUT_FILENAME_Z_m <- paste(OUTPUT_ADDRESS, "plot_Z_m.pdf", sep = "/")
-DATA_OUTPUT_FILENAME_Z_f <- paste(OUTPUT_ADDRESS, "plot_Z_f.pdf", sep = "/")
+DATA_OUTPUT_FILENAME_Z_a <- paste(OUTPUT_ADDRESS, "plot_Z_a.tiff", sep = "/")
+DATA_OUTPUT_FILENAME_Z_m <- paste(OUTPUT_ADDRESS, "plot_Z_m.tiff", sep = "/")
+DATA_OUTPUT_FILENAME_Z_f <- paste(OUTPUT_ADDRESS, "plot_Z_f.tiff", sep = "/")
 
-DATA_OUTPUT_FILENAME_Z_low <- paste(OUTPUT_ADDRESS, "plot_Z_low.pdf", sep = "/")
-DATA_OUTPUT_FILENAME_Z_mid <- paste(OUTPUT_ADDRESS, "plot_Z_mid.pdf", sep = "/")
-DATA_OUTPUT_FILENAME_Z_upp <- paste(OUTPUT_ADDRESS, "plot_Z_upp.pdf", sep = "/")
+DATA_OUTPUT_FILENAME_Z_low <- paste(OUTPUT_ADDRESS, "plot_Z_low.tiff", sep = "/")
+DATA_OUTPUT_FILENAME_Z_mid <- paste(OUTPUT_ADDRESS, "plot_Z_mid.tiff", sep = "/")
+DATA_OUTPUT_FILENAME_Z_upp <- paste(OUTPUT_ADDRESS, "plot_Z_upp.tiff", sep = "/")
 
 ggsave(file = DATA_OUTPUT_FILENAME_Y_a, plot = plot_Y_a, width = 3.5, height = 3)
 ggsave(file = DATA_OUTPUT_FILENAME_Y_m, plot = plot_Y_m, width = 3.5, height = 3)
