@@ -1,5 +1,5 @@
 ######################################################################
-### SIMULATION STUDY 3 VERSION 3.0.0 		   				       ###
+### SIMULATION STUDY 3 				 		   				       ###
 ### - Lambda1: LRT testing the covariance matrix is a UB matrix    ###
 ### - Study 3: FDP estimation						               ###
 ######################################################################

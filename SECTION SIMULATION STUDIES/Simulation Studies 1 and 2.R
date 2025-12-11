@@ -1,5 +1,5 @@
 ######################################################################
-### SIMULATION STUDY 1 and 2 VERSION 3.0.0 						   ###
+### SIMULATION STUDY 1 and 2 		  	 						   ###
 ### - Lambda1: LRT testing the covariance matrix is a UB matrix    ###
 ### - Lambda2: LRT testing a specified mean given a UB matrix      ###
 ### - Lambda3: LRT testing the equality of UB matrices             ###
